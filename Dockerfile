@@ -9,7 +9,7 @@ WORKDIR /app
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 # Install requirements but skip Windows-specific packages
-RUN pip install requirements.txt
+RUN pip install -r requirements.txt
 
 # Copy application code
 COPY . .
