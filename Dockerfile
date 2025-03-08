@@ -1,11 +1,7 @@
 FROM python:3.9.20-alpine3.20
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-   docker-cli \
-   docker-openrc \
-   containerd \
-   && rm -rf /var/lib/apt/lists/*
+RUN apk update && apk add docker-cli docker-openrc containerd && rm -rf /var/cache/apk/*
 
 # Set working directory
 WORKDIR /app
