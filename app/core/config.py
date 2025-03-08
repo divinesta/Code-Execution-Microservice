@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Define settings class
+
+
 class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     PROJECT_NAME: str = "Code Execution Service"
@@ -19,22 +21,27 @@ class Settings(BaseSettings):
 
     # Security
     API_KEY: str = os.getenv("API_KEY", "")
-    ALLOWED_ORIGINS: list = os.getenv("ALLOWED_ORIGINS", "").split(",")
+
+    # Other security settings
+    ALLOWED_HOSTS: list = ["*"]
+    # Add frontend URL if applicable
+    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"] if DEBUG else ["*"]
 
     # Language configurations
-    LANGUAGE_IMAGES = {
+    LANGUAGE_IMAGES: dict[str, str] = {
         "python": "python:3.9-slim",
-		"c": "gcc:latest",
+        "c": "gcc:latest",
         "cpp": "gcc:latest",
         "java": "openjdk:11",
     }
 
-    FILE_EXTENSIONS = {
+    FILE_EXTENSIONS: dict[str, str] = {
         "python": "py",
         "c": "c",
         "cpp": "cpp",
         "java": "java",
     }
+
 
 # Create settings instance
 settings = Settings()
