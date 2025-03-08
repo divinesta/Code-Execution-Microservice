@@ -8,8 +8,9 @@ WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-# Install requirements but skip Windows-specific packages
-RUN pip install --no-cache-dir $(grep -v "pywin32" requirements.txt)
+# Create a filtered requirements file without pywin32
+RUN grep -v "pywin32" requirements.txt > requirements_filtered.txt && \
+   pip install --no-cache-dir -r requirements_filtered.txt
 
 # Copy application code
 COPY . .
