@@ -1,0 +1,14 @@
+
+services:
+  code-execution:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - USE_DOCKER=true
+      - WORKSPACE_ROOT=/tmp/user_workspaces
+      - MAX_EXECUTION_TIME=10
+      - API_KEY=development_api_key
