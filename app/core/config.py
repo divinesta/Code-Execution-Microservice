@@ -9,6 +9,8 @@ load_dotenv()
 class Settings(BaseSettings):
     API_V1_STR: str = "/api"
     PROJECT_NAME: str = "Code Execution Service"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    DEBUG: bool = ENVIRONMENT == "development"
 
     # Docker configuration
     USE_DOCKER: bool = os.getenv("USE_DOCKER", "true").lower() == "true"
@@ -22,16 +24,16 @@ class Settings(BaseSettings):
     # Language configurations
     LANGUAGE_IMAGES = {
         "python": "python:3.9-slim",
+		"c": "gcc:latest",
         "cpp": "gcc:latest",
         "java": "openjdk:11",
-        "javascript": "node:16"
     }
 
     FILE_EXTENSIONS = {
         "python": "py",
+        "c": "c",
         "cpp": "cpp",
         "java": "java",
-        "javascript": "js"
     }
 
 # Create settings instance
