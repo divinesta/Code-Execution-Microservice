@@ -1,6 +1,6 @@
 FROM python:3.9.20-alpine3.20
 
-# Install system dependencies
+# Install system dependencies with apk
 RUN apk update && apk add docker-cli docker-openrc containerd && rm -rf /var/cache/apk/*
 
 # Set working directory
@@ -8,7 +8,8 @@ WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install requirements but skip Windows-specific packages
+RUN pip install --no-cache-dir $(grep -v "pywin32" requirements.txt)
 
 # Copy application code
 COPY . .
