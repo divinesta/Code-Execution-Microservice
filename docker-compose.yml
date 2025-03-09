@@ -8,6 +8,7 @@ services:
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      - ENVIRONMENT=development
       - USE_DOCKER=true
       - WORKSPACE_ROOT=/tmp/user_workspaces
       - MAX_EXECUTION_TIME=10

@@ -21,4 +21,4 @@ RUN mkdir -p /tmp/user_workspaces
 EXPOSE 8000
 
 # Start the FastAPI application with Uvicorn
-CMD ["uvicorn", "app.main:app", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "", "--port", "8000"]
