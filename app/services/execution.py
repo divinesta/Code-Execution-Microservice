@@ -125,16 +125,22 @@ class CodeExecutionService:
             container = container_info['container']
 
             # Create a temporary file with the code
+            workspace_path = f"{self.workspace_root}/{session_id}"
             file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
             filename = f"code.{file_ext}"
-            workspace_path = f"{self.workspace_root}/{session_id}"
+            code_path = os.path.join(workspace_path, filename)
 
-            with open(f"{workspace_path}/{filename}", "w") as f:
+            logger.debug(f"Writing code to: {code_path}")
+            with open(code_path, "w") as f:
                 f.write(code)
+
+            if not os.path.exists(code_path):
+                logger.error(f"Code file not created at: {code_path}")
+                raise RuntimeError("Failed to create code file")
 
             # Create input file if needed
             if input_data:
-                input_file = f"{workspace_path}/input.txt"
+                input_file = os.path.join(workspace_path, "input.txt")
                 with open(input_file, "w") as f:
                     f.write(input_data)
 
