@@ -51,6 +51,10 @@ class CodeExecutionService:
         # Create workspace directory for this session
         workspace_path = f"{self.workspace_root}/{session_id}"
         os.makedirs(workspace_path, exist_ok=True)
+        abs_workspace_path = os.path.abspath(workspace_path)
+
+        logger.info(f"Workspace path: {workspace_path}")
+        logger.info(f"Absolute workspace path: {abs_workspace_path}")
 
         try:
             # Create the container
@@ -60,7 +64,7 @@ class CodeExecutionService:
                 tty=True,
                 stdin_open=True,
                 volumes={
-                    os.path.abspath(workspace_path): {
+                    abs_workspace_path: {
                         'bind': '/workspace',
                         'mode': 'rw'
                     }
@@ -75,6 +79,10 @@ class CodeExecutionService:
                 security_opt=['no-new-privileges:true'],
                 network_mode='none'
             )
+
+            # Verify volume mounting worked
+            exit_code, output = container.exec_run("ls -la /workspace")
+            logger.info(f"Initial container workspace: {output.decode('utf-8')}")
 
             # Store container information
             self.active_containers[session_id] = {
@@ -137,6 +145,13 @@ class CodeExecutionService:
             if not os.path.exists(code_path):
                 logger.error(f"Code file not created at: {code_path}")
                 raise RuntimeError("Failed to create code file")
+
+            logger.debug(f"Code file created at: {code_path}")
+            logger.info(f"File exists with size: {os.path.getsize(code_path)} bytes")
+
+            # Debug: Check if files are visible in the container
+            exit_code, output = container.exec_run("ls -la /workspace")
+            logger.info(f"Container workspace contents: {output.decode('utf-8')}")
 
             # Create input file if needed
             if input_data:
