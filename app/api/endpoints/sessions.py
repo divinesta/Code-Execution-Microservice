@@ -9,7 +9,6 @@ router = APIRouter()
 
 class SessionCreate(BaseModel):
     language: str
-    initial_code: Optional[str] = None
 
 
 class SessionResponse(BaseModel):
