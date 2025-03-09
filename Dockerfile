@@ -7,8 +7,12 @@ RUN apk update && apk add docker-cli docker-openrc containerd && rm -rf /var/cac
 RUN adduser --disabled-password --gecos '' myuser && \
    mkdir -p /home/myuser/workspace
 
-USER myuser
+# Switch to root to add the docker group and add myuser to it
+USER root
+RUN addgroup docker && adduser myuser docker
 
+# Switch back to myuser
+USER myuser
 
 # Ensure the local bin directory is in PATH
 ENV PATH="/home/myuser/.local/bin:$PATH"
@@ -18,7 +22,7 @@ WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-# Install requirements but skip Windows-specific packages
+# Install requirements
 RUN pip install -r requirements.txt
 
 # Copy application code
