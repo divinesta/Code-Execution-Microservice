@@ -11,6 +11,6 @@ services:
     environment:
       - ENVIRONMENT=development
       - USE_DOCKER=true
-      - WORKSPACE_ROOT=/tmp/user_workspaces
+      - WORKSPACE_ROOT=/workspaces
       - MAX_EXECUTION_TIME=10
       - API_KEY=${API_KEY}

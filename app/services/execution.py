@@ -51,8 +51,9 @@ class CodeExecutionService:
         # Create workspace directory for this session
         workspace_path = f"{self.workspace_root}/{session_id}"
         os.makedirs(workspace_path, exist_ok=True)
-        abs_workspace_path = "/home/myuser"
-
+        # abs_workspace_path = "/root/Code-Execution-Microservice"
+        abs_workspace_path = os.path.abspath(workspace_path)
+        
         logger.info(f"Workspace path: {workspace_path}")
         logger.info(f"Absolute workspace path: {abs_workspace_path}")
 

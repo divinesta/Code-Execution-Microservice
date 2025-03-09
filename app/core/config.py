@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Docker configuration
     USE_DOCKER: bool = os.getenv("USE_DOCKER", "true").lower() == "true"
-    WORKSPACE_ROOT: str = os.getenv("WORKSPACE_ROOT", "/tmp/user_workspaces")
+    WORKSPACE_ROOT: str = os.getenv("WORKSPACE_ROOT", "/workspaces")
     MAX_EXECUTION_TIME: int = int(os.getenv("MAX_EXECUTION_TIME", "10"))
 
     # Security
