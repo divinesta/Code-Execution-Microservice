@@ -11,6 +11,9 @@ RUN adduser --disabled-password --gecos '' myuser && \
 USER root
 RUN addgroup docker && adduser myuser docker
 
+# Copy the docker-entrypoint.sh script; ensure it's in the build context
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Switch back to myuser
 USER myuser
@@ -29,9 +32,6 @@ RUN pip install -r requirements.txt
 # Copy application code
 COPY . .
 
-# Copy the docker-entrypoint.sh script; ensure it's in the build context
-COPY docker-entrypoint.sh .
-RUN chmod +x docker-entrypoint.sh
 
 # Expose port
 EXPOSE 8000
