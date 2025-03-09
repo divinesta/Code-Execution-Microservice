@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # Other security settings
     ALLOWED_HOSTS: list = ["*"]
     # Add frontend URL if applicable
-    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"] if DEBUG else ["*"]
+    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173", "https://exagrade.vercel.app"] if DEBUG else ["*"]
 
     # Language configurations
     LANGUAGE_IMAGES: dict[str, str] = {
