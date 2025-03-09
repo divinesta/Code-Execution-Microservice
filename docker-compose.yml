@@ -6,10 +6,10 @@ services:
     volumes:
       - .:/app
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./workspace:/home/myuser/workspace
+      - ./workspace:/workspace
     environment:
       - ENVIRONMENT=development
       - USE_DOCKER=true
-      - WORKSPACE_ROOT=/home/myuser/workspace
+      - WORKSPACE_ROOT=/workspace
       - MAX_EXECUTION_TIME=10
       - API_KEY=${API_KEY}
