@@ -60,7 +60,7 @@ class CodeExecutionService:
                 tty=True,
                 stdin_open=True,
                 volumes={
-                    workspace_path: {
+                    os.path.abspath(workspace_path): {
                         'bind': '/workspace',
                         'mode': 'rw'
                     }
