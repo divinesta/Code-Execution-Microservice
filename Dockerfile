@@ -8,8 +8,8 @@ RUN adduser --disabled-password --gecos '' myuser && \
    mkdir -p /home/myuser/workspace
 
 # Switch to root to add the docker group and add myuser to it
-USER root
 RUN addgroup docker && adduser myuser docker
+USER root
 
 # Copy the docker-entrypoint.sh script; ensure it's in the build context
 COPY docker-entrypoint.sh /usr/local/bin/
