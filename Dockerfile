@@ -31,5 +31,7 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
+ENTRYPOINT ["docker-entrypoint.sh"]
+
 # Start the FastAPI application with Uvicorn
 CMD ["uvicorn", "app.main:app", "--host", "", "--port", "8000"]
