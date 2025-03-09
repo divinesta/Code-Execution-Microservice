@@ -12,4 +12,4 @@ services:
       - USE_DOCKER=true
       - WORKSPACE_ROOT=/tmp/user_workspaces
       - MAX_EXECUTION_TIME=10
-      - API_KEY=development_api_key
+      - API_KEY=${API_KEY}
