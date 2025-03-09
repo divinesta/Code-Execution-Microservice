@@ -1,24 +1,24 @@
-FROM python:3.9.20-alpine3.20
+FROM python:3.9-slim
 
-# Install system dependencies with apk
-RUN apk update && apk add docker-cli docker-openrc containerd && rm -rf /var/cache/apk/*
+# Install system dependencies (e.g., docker CLI)
+RUN apt-get update && apt-get install -y docker.io && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Create a non-root user and a dedicated workspace directory
+RUN adduser --disabled-password --gecos '' myuser && \
+   mkdir -p /home/myuser/workspace
+
+# Switch to non-root user
+USER myuser
+
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
-# Install requirements but skip Windows-specific packages
-RUN pip install -r requirements.txt
-
 # Copy application code
-COPY . .
+COPY . /app
 
-# Create workspace directory
-RUN mkdir -p /tmp/user_workspaces
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port
 EXPOSE 8000
 
 # Start the FastAPI application with Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

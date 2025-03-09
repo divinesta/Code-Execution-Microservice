@@ -51,7 +51,7 @@ class CodeExecutionService:
         # Create workspace directory for this session
         workspace_path = f"{self.workspace_root}/{session_id}"
         os.makedirs(workspace_path, exist_ok=True)
-        abs_workspace_path = os.path.abspath(workspace_path)
+        abs_workspace_path = "/home/myuser"
 
         logger.info(f"Workspace path: {workspace_path}")
         logger.info(f"Absolute workspace path: {abs_workspace_path}")
@@ -138,20 +138,19 @@ class CodeExecutionService:
             filename = f"code.{file_ext}"
             code_path = os.path.join(workspace_path, filename)
 
-            logger.debug(f"Writing code to: {code_path}")
+            logger.debug(f"Attempting to write code at: {code_path}")
             with open(code_path, "w") as f:
                 f.write(code)
+            logger.info(f"Successfully wrote code file to: {os.path.abspath(code_path)}")
 
             if not os.path.exists(code_path):
                 logger.error(f"Code file not created at: {code_path}")
                 raise RuntimeError("Failed to create code file")
 
-            logger.debug(f"Code file created at: {code_path}")
-            logger.info(f"File exists with size: {os.path.getsize(code_path)} bytes")
-
-            # Debug: Check if files are visible in the container
+            logger.debug(f"File exists with size: {os.path.getsize(code_path)} bytes")
+            # Debug: list the files in the workspace directory within the container
             exit_code, output = container.exec_run("ls -la /workspace")
-            logger.info(f"Container workspace contents: {output.decode('utf-8')}")
+            logger.info(f"Container workspace contents after file creation: {output.decode('utf-8')}")
 
             # Create input file if needed
             if input_data:
