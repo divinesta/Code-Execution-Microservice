@@ -9,6 +9,10 @@ RUN adduser --disabled-password --gecos '' myuser && \
 
 USER myuser
 
+
+# Ensure the local bin directory is in PATH
+ENV PATH="/home/myuser/.local/bin:$PATH"
+
 # Set working directory
 WORKDIR /app
 
