@@ -171,7 +171,7 @@ class CodeExecutionService:
                     cmd=cmd,
                     tty=True,
                     demux=True,  # Split stdout and stderr
-                    timeout=timeout
+                    # timeout=timeout
                 )
 
                 # Process output
