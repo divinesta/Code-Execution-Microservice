@@ -51,9 +51,9 @@ class CodeExecutionService:
         # Create workspace directory for this session
         workspace_path = f"{self.workspace_root}/{session_id}"
         os.makedirs(workspace_path, exist_ok=True)
-        # abs_workspace_path = "/root/Code-Execution-Microservice"
-        abs_workspace_path = os.path.abspath(workspace_path)
-        
+        abs_workspace_path = "/root/Code-Execution-Microservice"
+        # abs_workspace_path = os.path.abspath(workspace_path)
+
         logger.info(f"Workspace path: {workspace_path}")
         logger.info(f"Absolute workspace path: {abs_workspace_path}")
 
@@ -162,29 +162,29 @@ class CodeExecutionService:
             # Execute the code based on language
             if language == 'python':
                 if input_data:
-                    cmd = f"python /workspace/{filename} < /workspace/input.txt"
+                    cmd = f"python {filename} < input.txt"
                 else:
-                    cmd = f"python /workspace/{filename}"
+                    cmd = f"python {filename}"
             elif language == 'cpp':
-                compile_cmd = f"g++ -o /workspace/program /workspace/{filename}"
+                compile_cmd = f"g++ -o program {filename}"
                 if input_data:
-                    exec_cmd = "/workspace/program < /workspace/input.txt"
+                    exec_cmd = f"program < input.txt"
                 else:
-                    exec_cmd = "/workspace/program"
+                    exec_cmd = f"program"
                 cmd = f"bash -c '{compile_cmd} && {exec_cmd}'"
             elif language == 'java':
                 class_name = "Main"  # Assume main class is called Main
                 if input_data:
-                    cmd = f"javac /workspace/{filename} && java -cp /workspace {class_name} < /workspace/input.txt"
+                    cmd = f"javac {filename} && java -cp . {class_name} < input.txt"
                 else:
-                    cmd = f"javac /workspace/{filename} && java -cp /workspace {class_name}"
+                    cmd = f"javac {filename} && java -cp . {class_name}"
             elif language == 'javascript':
                 if input_data:
-                    cmd = f"node /workspace/{filename} < /workspace/input.txt"
+                    cmd = f"node {filename} < input.txt"
                 else:
-                    cmd = f"node /workspace/{filename}"
+                    cmd = f"node {filename}"
             else:
-                cmd = f"cat /workspace/{filename}"  # Fallback
+                cmd = f"cat {filename}"  # Fallback
 
             # Execute in container with timeout
             try:
