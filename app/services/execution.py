@@ -156,7 +156,6 @@ class CodeExecutionService:
                 logger.error(f"Code file not created at: {code_path}")
                 raise RuntimeError("Failed to create code file")
 
-
             # Prepare the command based on language
             if language == 'python':
                 if input_data:
@@ -187,7 +186,6 @@ class CodeExecutionService:
                     cmd = f"node /code/{unique_filename}"
             else:
                 cmd = f"cat /code/{unique_filename}"
-
 
             logger.debug(f"Executing command in container: {cmd}")
 
@@ -309,6 +307,9 @@ class CodeExecutionService:
 
         # For now, just execute and send the complete result through callback
         result = await self.execute_code(session_id, code, input_data, timeout)
+
+        # Add this debug log
+        logger.info(f"About to call callback with result: {result}")
 
         if callback:
             await callback({
