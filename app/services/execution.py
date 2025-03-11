@@ -49,7 +49,7 @@ class CodeExecutionService:
         image_name = settings.LANGUAGE_IMAGES[language]
 
         # The container will see the same directory at:
-        code_file_path = 'root/Code-Execution-Microservice/workspace'
+        code_file_path = '/root/Code-Execution-Microservice/workspace'
 
         logger.info(f"Container workspace path: {code_file_path}")
 
