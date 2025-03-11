@@ -158,29 +158,29 @@ class CodeExecutionService:
             # Prepare the command based on language
             if language == 'python':
                 if input_data:
-                    cmd = f"python /workspace/{session_id}/{filename} < /workspace/{session_id}/input.txt"
+                    cmd = f"python {filename} < input.txt"
                 else:
-                    cmd = f"python /workspace/{session_id}/{filename}"
+                    cmd = f"python {filename}"
             elif language == 'cpp':
-                compile_cmd = f"g++ -o program /workspace/{session_id}/{filename}"
+                compile_cmd = f"g++ -o program {filename}"
                 if input_data:
-                    exec_cmd = f"program < /workspace/{session_id}/input.txt"
+                    exec_cmd = f"program < input.txt"
                 else:
                     exec_cmd = f"program"
                 cmd = f"bash -c '{compile_cmd} && {exec_cmd}'"
             elif language == 'java':
                 class_name = "Main"  # Assume main class is called Main
                 if input_data:
-                    cmd = f"javac /workspace/{session_id}/{filename} && java -cp . {class_name} < /workspace/{session_id}/input.txt"
+                    cmd = f"javac {filename} && java -cp . {class_name} < input.txt"
                 else:
-                    cmd = f"javac /workspace/{session_id}/{filename} && java -cp . {class_name}"
+                    cmd = f"javac {filename} && java -cp . {class_name}"
             elif language == 'javascript':
                 if input_data:
-                    cmd = f"node /workspace/{session_id}/{filename} < /workspace/{session_id}/input.txt"
+                    cmd = f"node {filename} < input.txt"
                 else:
-                    cmd = f"node /workspace/{session_id}/{filename}"
+                    cmd = f"node {filename}"
             else:
-                cmd = f"cat /workspace/{session_id}/{filename}"  # Fallback
+                cmd = f"cat {filename}"  # Fallback
 
             # Execute in container with timeout
             try:
