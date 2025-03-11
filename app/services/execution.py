@@ -51,8 +51,7 @@ class CodeExecutionService:
         # Create workspace directory for this session
         workspace_path = f"{self.workspace_root}/{session_id}"
         os.makedirs(workspace_path, exist_ok=True)
-        abs_workspace_path = "/root/Code-Execution-Microservice"
-        # abs_workspace_path = os.path.abspath(workspace_path)
+        abs_workspace_path = os.path.abspath(workspace_path)
 
         logger.info(f"Workspace path: {workspace_path}")
         logger.info(f"Absolute workspace path: {abs_workspace_path}")
@@ -83,7 +82,8 @@ class CodeExecutionService:
 
             # Verify volume mounting worked
             exit_code, output = container.exec_run("ls -la /workspace")
-            logger.info(f"Initial container workspace: {output.decode('utf-8')}")
+            logger.info(
+                f"Initial container workspace: {output.decode('utf-8')}")
 
             # Store container information
             self.active_containers[session_id] = {
@@ -140,51 +140,46 @@ class CodeExecutionService:
             code_path = os.path.join(workspace_path, filename)
 
             logger.debug(f"Attempting to write code at: {code_path}")
+            # Ensure the directory exists
+            os.makedirs(workspace_path, exist_ok=True)
             with open(code_path, "w") as f:
                 f.write(code)
-            logger.info(f"Successfully wrote code file to: {os.path.abspath(code_path)}")
+            logger.info(
+                f"Successfully wrote code file to: {os.path.abspath(code_path)}")
 
             if not os.path.exists(code_path):
                 logger.error(f"Code file not created at: {code_path}")
                 raise RuntimeError("Failed to create code file")
 
-            logger.debug(f"File exists with size: {os.path.getsize(code_path)} bytes")
-            # Debug: list the files in the workspace directory within the container
-            exit_code, output = container.exec_run("ls -la /workspace")
-            logger.info(f"Container workspace contents after file creation: {output.decode('utf-8')}")
+            logger.debug(
+                f"File exists with size: {os.path.getsize(code_path)} bytes")
 
-            # Create input file if needed
-            if input_data:
-                input_file = os.path.join(workspace_path, "input.txt")
-                with open(input_file, "w") as f:
-                    f.write(input_data)
-
-            # Execute the code based on language
+            # Prepare the command based on language
             if language == 'python':
                 if input_data:
-                    cmd = f"python {filename} < input.txt"
+                    cmd = f"python /workspace/{session_id}/{filename} < /workspace/{session_id}/input.txt"
                 else:
-                    cmd = f"python {filename}"
+                    cmd = f"python /workspace/{session_id}/{filename}"
             elif language == 'cpp':
-                compile_cmd = f"g++ -o program {filename}"
+                compile_cmd = f"g++ -o program /workspace/{session_id}/{filename}"
                 if input_data:
-                    exec_cmd = f"program < input.txt"
+                    exec_cmd = f"program < /workspace/{session_id}/input.txt"
                 else:
                     exec_cmd = f"program"
                 cmd = f"bash -c '{compile_cmd} && {exec_cmd}'"
             elif language == 'java':
                 class_name = "Main"  # Assume main class is called Main
                 if input_data:
-                    cmd = f"javac {filename} && java -cp . {class_name} < input.txt"
+                    cmd = f"javac /workspace/{session_id}/{filename} && java -cp . {class_name} < /workspace/{session_id}/input.txt"
                 else:
-                    cmd = f"javac {filename} && java -cp . {class_name}"
+                    cmd = f"javac /workspace/{session_id}/{filename} && java -cp . {class_name}"
             elif language == 'javascript':
                 if input_data:
-                    cmd = f"node {filename} < input.txt"
+                    cmd = f"node /workspace/{session_id}/{filename} < /workspace/{session_id}/input.txt"
                 else:
-                    cmd = f"node {filename}"
+                    cmd = f"node /workspace/{session_id}/{filename}"
             else:
-                cmd = f"cat {filename}"  # Fallback
+                cmd = f"cat /workspace/{session_id}/{filename}"  # Fallback
 
             # Execute in container with timeout
             try:
@@ -192,7 +187,6 @@ class CodeExecutionService:
                     cmd=cmd,
                     tty=True,
                     demux=True,  # Split stdout and stderr
-                    # timeout=timeout
                 )
 
                 # Process output
