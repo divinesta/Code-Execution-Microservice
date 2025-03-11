@@ -65,11 +65,11 @@ class CodeExecutionService:
                 stdin_open=True,
                 volumes={
                     abs_workspace_path: {
-                        'bind': '/workspace',
+                        'bind': f'/workspace/{session_id}',
                         'mode': 'rw'
                     }
                 },
-                working_dir='/workspace',
+                working_dir=f'/workspace/{session_id}',
                 # Resource limits
                 mem_limit='256m',
                 cpu_period=100000,
@@ -81,7 +81,8 @@ class CodeExecutionService:
             )
 
             # Verify volume mounting worked
-            exit_code, output = container.exec_run("ls -la /workspace")
+            exit_code, output = container.exec_run(
+                f"ls -la /workspace/{session_id}")
             logger.info(
                 f"Initial container workspace: {output.decode('utf-8')}")
 
