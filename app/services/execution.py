@@ -49,9 +49,9 @@ class CodeExecutionService:
         image_name = settings.LANGUAGE_IMAGES[language]
 
         # The container will see the same directory at:
-        container_workspace = f"{settings.WORKSPACE_ROOT}"
+        code_file_path = 'root/Code-Execution-Microservice/workspace'
 
-        logger.info(f"Container workspace path: {container_workspace}")
+        logger.info(f"Container workspace path: {code_file_path}")
 
         try:
             container = self.client.containers.run(
@@ -60,7 +60,7 @@ class CodeExecutionService:
                 tty=True,
                 stdin_open=True,
                 volumes={
-                    container_workspace: {
+                    code_file_path: {
                         'bind': '/code',
                         'mode': 'rw'
                     }
@@ -77,7 +77,7 @@ class CodeExecutionService:
             )
 
             # Verify volume mounting worked
-            exit_code, output = container.exec_run(f"ls -la {container_workspace}")
+            exit_code, output = container.exec_run(f"ls -la {code_file_path}")
             logger.info(
                 f"Initial container workspace: {output.decode('utf-8')}")
 
@@ -94,8 +94,8 @@ class CodeExecutionService:
 
         except Exception as e:
             # Clean up workspace if creation failed
-            if os.path.exists(container_workspace):
-                shutil.rmtree(container_workspace)
+            if os.path.exists(code_file_path):
+                shutil.rmtree(code_file_path)
             logger.error(f"Failed to create Docker session: {e}")
             raise ValueError(f"Failed to create Docker session: {str(e)}")
 
@@ -140,7 +140,7 @@ class CodeExecutionService:
             with open(code_path, "w") as f:
                 f.write(code)
 
-            logger.info(f"Successfully wrote code file to: {os.path.abspath(code_path)}")
+            logger.info(f"Successfully wrote code file to: {code_path}")
 
             # Write input data to a temporary file if provided
             if input_data:
@@ -148,7 +148,7 @@ class CodeExecutionService:
                 input_path = os.path.join(code_dir, input_filename)
                 with open(input_path, "w") as f:
                     f.write(input_data)
-                logger.info(f"Successfully wrote input file to: {os.path.abspath(input_path)}")
+                logger.info(f"Successfully wrote input file to: {input_path}")
             else:
                 input_filename = None
 
