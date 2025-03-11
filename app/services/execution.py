@@ -2,6 +2,7 @@ import docker
 import uuid
 import logging
 import os
+import shlex
 import asyncio
 from datetime import datetime
 import shutil
@@ -42,34 +43,29 @@ class CodeExecutionService:
 
     async def _create_docker_session(self, session_id, language):
         """Create a Docker-based execution session"""
-        # Get image name for language
         if language not in settings.LANGUAGE_IMAGES:
             raise ValueError(f"Unsupported language: {language}")
 
         image_name = settings.LANGUAGE_IMAGES[language]
 
-        # Create workspace directory for this session
-        workspace_path = f"{self.workspace_root}/{session_id}"
-        os.makedirs(workspace_path, exist_ok=True)
-        abs_workspace_path = os.path.abspath(workspace_path)
+        # The container will see the same directory at:
+        container_workspace = f"{settings.WORKSPACE_ROOT}"
 
-        logger.info(f"Workspace path: {workspace_path}")
-        logger.info(f"Absolute workspace path: {abs_workspace_path}")
+        logger.info(f"Container workspace path: {container_workspace}")
 
         try:
-            # Create the container
             container = self.client.containers.run(
                 image=image_name,
                 detach=True,
                 tty=True,
                 stdin_open=True,
                 volumes={
-                    abs_workspace_path: {
-                        'bind': f'/workspace/{session_id}',
+                    container_workspace: {
+                        'bind': '/code',
                         'mode': 'rw'
                     }
                 },
-                working_dir=f'/workspace/{session_id}',
+                working_dir='/code',
                 # Resource limits
                 mem_limit='256m',
                 cpu_period=100000,
@@ -81,8 +77,7 @@ class CodeExecutionService:
             )
 
             # Verify volume mounting worked
-            exit_code, output = container.exec_run(
-                f"ls -la /workspace/{session_id}")
+            exit_code, output = container.exec_run(f"ls -la {container_workspace}")
             logger.info(
                 f"Initial container workspace: {output.decode('utf-8')}")
 
@@ -99,8 +94,8 @@ class CodeExecutionService:
 
         except Exception as e:
             # Clean up workspace if creation failed
-            if os.path.exists(workspace_path):
-                shutil.rmtree(workspace_path)
+            if os.path.exists(container_workspace):
+                shutil.rmtree(container_workspace)
             logger.error(f"Failed to create Docker session: {e}")
             raise ValueError(f"Failed to create Docker session: {str(e)}")
 
@@ -134,53 +129,67 @@ class CodeExecutionService:
             language = container_info['language']
             container = container_info['container']
 
-            # Create a temporary file with the code
-            workspace_path = f"{self.workspace_root}/{session_id}"
+            # Use a common host directory (instead of a subdirectory based on the session id)
+            code_dir = "./workspace"
+            os.makedirs(code_dir, exist_ok=True)
             file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
-            filename = f"code.{file_ext}"
-            code_path = os.path.join(workspace_path, filename)
+            unique_filename = f"code_{uuid.uuid4().hex}.{file_ext}"
+            code_path = os.path.join(code_dir, unique_filename)
+            logger.debug(f"Writing code file at: {code_path}")
 
-            logger.debug(f"Attempting to write code at: {code_path}")
-            # Ensure the directory exists
-            os.makedirs(workspace_path, exist_ok=True)
             with open(code_path, "w") as f:
                 f.write(code)
-            logger.info(
-                f"Successfully wrote code file to: {os.path.abspath(code_path)}")
+
+            logger.info(f"Successfully wrote code file to: {os.path.abspath(code_path)}")
+
+            # Write input data to a temporary file if provided
+            if input_data:
+                input_filename = f"input_{uuid.uuid4().hex}.txt"
+                input_path = os.path.join(code_dir, input_filename)
+                with open(input_path, "w") as f:
+                    f.write(input_data)
+                logger.info(f"Successfully wrote input file to: {os.path.abspath(input_path)}")
+            else:
+                input_filename = None
 
             if not os.path.exists(code_path):
                 logger.error(f"Code file not created at: {code_path}")
                 raise RuntimeError("Failed to create code file")
 
-            logger.debug(
-                f"File exists with size: {os.path.getsize(code_path)} bytes")
 
             # Prepare the command based on language
             if language == 'python':
                 if input_data:
-                    cmd = f"python {filename} < input.txt"
+                    cmd = f"bash -c 'python /code/{unique_filename} < /code/{input_filename}'"
                 else:
-                    cmd = f"python {filename}"
+                    cmd = f"python /code/{unique_filename}"
+
             elif language == 'cpp':
-                compile_cmd = f"g++ -o program {filename}"
+                compile_cmd = f"g++ /code/{unique_filename} -o /code/a.out"
                 if input_data:
-                    exec_cmd = f"program < input.txt"
+                    escaped_input = shlex.quote(input_data or '')
+                    run_cmd = f"echo {escaped_input} | /code/a.out"
                 else:
-                    exec_cmd = f"program"
-                cmd = f"bash -c '{compile_cmd} && {exec_cmd}'"
+                    run_cmd = f"/code/a.out"
+                cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
+
             elif language == 'java':
-                class_name = "Main"  # Assume main class is called Main
+                class_name = "Main"
                 if input_data:
-                    cmd = f"javac {filename} && java -cp . {class_name} < input.txt"
+                    cmd = f"bash -c 'javac /code/{unique_filename} && java -cp /code {class_name} < /code/{input_filename}'"
                 else:
-                    cmd = f"javac {filename} && java -cp . {class_name}"
+                    cmd = f"bash -c 'javac /code/{unique_filename} && java -cp /code {class_name}'"
+
             elif language == 'javascript':
                 if input_data:
-                    cmd = f"node {filename} < input.txt"
+                    cmd = f"bash -c 'node /code/{unique_filename} < /code/{input_filename}'"
                 else:
-                    cmd = f"node {filename}"
+                    cmd = f"node /code/{unique_filename}"
             else:
-                cmd = f"cat {filename}"  # Fallback
+                cmd = f"cat /code/{unique_filename}"
+
+
+            logger.debug(f"Executing command in container: {cmd}")
 
             # Execute in container with timeout
             try:
@@ -193,6 +202,11 @@ class CodeExecutionService:
                 # Process output
                 stdout = output[0].decode('utf-8') if output[0] else ""
                 stderr = output[1].decode('utf-8') if output[1] else ""
+
+                # Clean up temporary files after execution
+                # os.remove(code_path)
+                # if input_filename:
+                #     os.remove(input_path)
 
                 return {
                     'exit_code': exit_code,
