@@ -102,7 +102,8 @@ class CodeExecutionService:
     async def _create_process_session(self, session_id, language):
         """Create a process-based execution session (fallback)"""
         # Create workspace directory for this session
-        workspace_path = f"{self.workspace_root}/{session_id}"
+        # workspace_path = f"{self.workspace_root}/workspace"
+        workspace_path = '/root/Code-Execution-Microservice/workspace'
         os.makedirs(workspace_path, exist_ok=True)
 
         # Store session information
