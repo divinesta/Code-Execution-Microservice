@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import json
 import logging
 from typing import Dict, List
+import asyncio
 
 from app.services.execution import execution_service
 from app.core.config import settings
@@ -101,6 +102,26 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                         'type': 'pong',
                         'timestamp': data.get('timestamp')
                     })
+
+                elif 'input_response' in data:
+                    # Process user's input response to a previous prompt
+                    input_response = data['input_response']
+                    # Store this in the active session for the running code to consume
+                    if session_id in execution_service.active_sessions:
+                        if 'input_queue' not in execution_service.active_sessions[session_id]:
+                            execution_service.active_sessions[session_id]['input_queue'] = asyncio.Queue(
+                            )
+
+                        await execution_service.active_sessions[session_id]['input_queue'].put(input_response)
+                        await websocket.send_json({
+                            'type': 'terminal.input_processed',
+                            'status': 'success'
+                        })
+                    else:
+                        await websocket.send_json({
+                            'type': 'terminal.error',
+                            'error': 'No active execution waiting for input'
+                        })
 
                 else:
                     # Unknown message type

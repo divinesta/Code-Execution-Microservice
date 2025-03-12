@@ -202,9 +202,9 @@ class CodeExecutionService:
                 stderr = output[1].decode('utf-8') if output[1] else ""
 
                 # Clean up temporary files after execution
-                # os.remove(code_path)
-                # if input_filename:
-                #     os.remove(input_path)
+                os.remove(code_path)
+                if input_filename:
+                    os.remove(input_path)
 
                 return {
                     'exit_code': exit_code,
@@ -297,6 +297,26 @@ class CodeExecutionService:
                 'error': str(e)
             }
 
+    def _has_input_requirements(self, code, language):
+        """Check if code likely requires user input based on language"""
+        if language == 'python':
+            return "input(" in code
+        elif language == 'javascript':
+            return "prompt(" in code or "readline" in code or "process.stdin" in code
+        elif language == 'java':
+            return "Scanner" in code or "readLine" in code or "System.console" in code
+        elif language == 'cpp':
+            return "cin" in code or "getline" in code or "scanf" in code
+        elif language == 'c':
+            return "scanf" in code or "getchar" in code or "gets" in code
+        elif language == 'ruby':
+            return "gets" in code or "readline" in code
+        elif language == 'csharp':
+            return "Console.Read" in code or "ReadLine" in code
+        # For any unsupported language, default to false
+        return False
+
+
     async def execute_code_with_streaming(self, session_id, code, input_data=None, timeout=None, callback=None):
         """Execute code with streaming output via callback"""
         if timeout is None:
@@ -305,21 +325,192 @@ class CodeExecutionService:
         if session_id not in self.active_containers and session_id not in self.active_sessions:
             raise ValueError(f"Session {session_id} not found")
 
-        # For now, just execute and send the complete result through callback
-        result = await self.execute_code(session_id, code, input_data, timeout)
+        # Get the language from the appropriate session storage
+        if session_id in self.active_sessions:
+            language = self.active_sessions[session_id]['language']
+        elif session_id in self.active_containers:
+            language = self.active_containers[session_id]['language']
+        else:
+            language = 'python'
 
-        # Add this debug log
-        logger.info(f"About to call callback with result: {result}")
+        # Check if code might need interactive input using the language-aware function
+        has_input_calls = self._has_input_requirements(code, language)
 
-        if callback:
-            await callback({
-                'output': result['output'],
-                'error': result['error'],
-                'exit_code': result['exit_code'],
-                'complete': True
-            })
+        if has_input_calls and session_id in self.active_sessions:
+            # Use the interactive execution method for code that might need input
+            result = await self._execute_with_interactive_input(session_id, code, timeout, callback)
+        else:
+            # For code without input or Docker-based execution, use the standard method
+            result = await self.execute_code(session_id, code, input_data, timeout)
+
+            if callback:
+                await callback({
+                    'output': result['output'],
+                    'error': result['error'],
+                    'exit_code': result['exit_code'],
+                    'complete': True
+                })
 
         return result
+
+    async def _execute_with_interactive_input(self, session_id, code, timeout, callback=None):
+        """Execute code with interactive input support"""
+        session_info = self.active_sessions[session_id]
+        language = session_info['language']
+        workspace_path = session_info['workspace_path']
+
+        # Initialize input queue if needed
+        if 'input_queue' not in session_info:
+            session_info['input_queue'] = asyncio.Queue()
+
+        input_queue = session_info['input_queue']
+
+        # Create code file
+        file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
+        code_path = f"{workspace_path}/code.{file_ext}"
+
+        with open(code_path, "w") as f:
+            f.write(code)
+
+        # Prepare the command based on language
+        if language == 'python':
+            cmd = ["python", code_path]
+        elif language == 'javascript':
+            cmd = ["node", code_path]
+        elif language == 'java':
+            cmd = ["java", code_path]
+        elif language == 'cpp':
+            cmd = ["g++", code_path, "-o", "a.out"]
+        elif language == 'c':
+            cmd = ["gcc", code_path, "-o", "a.out"]
+        else:
+            return {
+                'exit_code': 1,
+                'output': "",
+                'error': f"Language {language} not supported in interactive mode"
+            }
+
+        # Execute with interactive input handling
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            # Track if we're waiting for input
+            waiting_for_input = False
+            output_buffer = ""
+
+            # Function to handle process output
+            async def read_output():
+                nonlocal waiting_for_input, output_buffer
+
+                # Read a small chunk to detect prompts quickly
+                stdout_chunk = await process.stdout.read(1024)
+                if not stdout_chunk:
+                    return False
+
+                chunk_output = stdout_chunk.decode()
+                output_buffer += chunk_output
+
+                # Check if this might be an input prompt
+                if chunk_output.endswith(': ') or 'input(' in chunk_output.lower():
+                    waiting_for_input = True
+
+                # Send the output chunk
+                if callback:
+                    await callback({
+                        'output': chunk_output,
+                        'waiting_for_input': waiting_for_input,
+                        'complete': False,
+                        'exit_code': None,
+                        'error': None
+                    })
+
+                return True
+
+            # Start reading initial output
+            has_output = await read_output()
+
+            # Main execution loop
+            while process.returncode is None:
+                if waiting_for_input:
+                    # Wait for user input (with timeout)
+                    try:
+                        user_input = await asyncio.wait_for(
+                            input_queue.get(),
+                            timeout=timeout
+                        )
+
+                        # Send input to process
+                        process.stdin.write(f"{user_input}\n".encode())
+                        await process.stdin.drain()
+
+                        # Reset waiting flag and continue reading output
+                        waiting_for_input = False
+                        await read_output()
+
+                    except asyncio.TimeoutError:
+                        # Kill process if waiting too long for input
+                        process.kill()
+                        if callback:
+                            await callback({
+                                'output': '\nInput timeout exceeded',
+                                'complete': True,
+                                'exit_code': 1,
+                                'error': 'Timeout waiting for input'
+                            })
+                        return {
+                            'exit_code': 1,
+                            'output': output_buffer + '\nInput timeout exceeded',
+                            'error': 'Timeout waiting for input'
+                        }
+                elif has_output:
+                    # Keep reading output while available
+                    has_output = await read_output()
+                else:
+                    # Wait for process to complete or produce more output
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        # Just a short timeout to check status again
+                        continue
+
+            # Read any remaining output
+            stdout, stderr = await process.communicate()
+            final_output = stdout.decode()
+            output_buffer += final_output
+            error = stderr.decode() if stderr else None
+
+            if callback:
+                await callback({
+                    'output': final_output,
+                    'complete': True,
+                    'exit_code': process.returncode,
+                    'error': error
+                })
+
+            return {
+                'exit_code': process.returncode,
+                'output': output_buffer,
+                'error': error
+            }
+
+        except Exception as e:
+            if callback:
+                await callback({
+                    'output': '',
+                    'complete': True,
+                    'exit_code': 1,
+                    'error': str(e)
+                })
+            return {
+                'exit_code': 1,
+                'output': '',
+                'error': str(e)
+            }
 
     async def terminate_session(self, session_id):
         """Terminate an execution session and clean up resources"""
