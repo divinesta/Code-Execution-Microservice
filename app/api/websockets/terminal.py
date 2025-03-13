@@ -106,8 +106,19 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                 elif 'input_response' in data:
                     # Process user's input response to a previous prompt
                     input_response = data['input_response']
-                    # Store this in the active session for the running code to consume
-                    if session_id in execution_service.active_sessions:
+
+                    # Store this in the active session or container
+                    if session_id in execution_service.active_containers:
+                        container_info = execution_service.active_containers[session_id]
+                        if 'input_queue' not in container_info:
+                            container_info['input_queue'] = asyncio.Queue()
+
+                        await container_info['input_queue'].put(input_response)
+                        await websocket.send_json({
+                            'type': 'terminal.input_processed',
+                            'status': 'success'
+                        })
+                    elif session_id in execution_service.active_sessions:
                         if 'input_queue' not in execution_service.active_sessions[session_id]:
                             execution_service.active_sessions[session_id]['input_queue'] = asyncio.Queue(
                             )

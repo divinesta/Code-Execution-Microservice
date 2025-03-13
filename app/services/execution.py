@@ -159,34 +159,17 @@ class CodeExecutionService:
 
             # Prepare the command based on language
             if language == 'python':
-                if input_data:
-                    cmd = f"bash -c 'python /code/{unique_filename} < /code/{input_filename}'"
-                else:
-                    cmd = f"python /code/{unique_filename}"
+                cmd = f"python /code/{unique_filename}"
 
             elif language == 'cpp':
                 compile_cmd = f"g++ /code/{unique_filename} -o /code/a.out"
-                if input_data:
-                    escaped_input = shlex.quote(input_data or '')
-                    run_cmd = f"echo {escaped_input} | /code/a.out"
-                else:
-                    run_cmd = f"/code/a.out"
+                run_cmd = f"/code/a.out"
                 cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
 
-            elif language == 'java':
-                class_name = "Main"
-                if input_data:
-                    cmd = f"bash -c 'javac /code/{unique_filename} && java -cp /code {class_name} < /code/{input_filename}'"
-                else:
-                    cmd = f"bash -c 'javac /code/{unique_filename} && java -cp /code {class_name}'"
-
-            elif language == 'javascript':
-                if input_data:
-                    cmd = f"bash -c 'node /code/{unique_filename} < /code/{input_filename}'"
-                else:
-                    cmd = f"node /code/{unique_filename}"
-            else:
-                cmd = f"cat /code/{unique_filename}"
+            elif language == 'c':
+                compile_cmd = f"gcc /code/{unique_filename} -o /code/a.out"
+                run_cmd = f"/code/a.out"
+                cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
 
             logger.debug(f"Executing command in container: {cmd}")
 
@@ -218,11 +201,7 @@ class CodeExecutionService:
                     'output': "",
                     'error': str(e)
                 }
-        else:
-            # Process-based execution (fallback)
-            return await self._execute_in_process(session_id, code, input_data, timeout)
 
-    async def _execute_in_process(self, session_id, code, input_data=None, timeout=10):
         """Execute code using a subprocess (fallback method)"""
         session_info = self.active_sessions[session_id]
         language = session_info['language']
@@ -317,7 +296,6 @@ class CodeExecutionService:
         # For any unsupported language, default to false
         return False
 
-
     async def execute_code_with_streaming(self, session_id, code, input_data=None, timeout=None, callback=None):
         """Execute code with streaming output via callback"""
         if timeout is None:
@@ -326,35 +304,93 @@ class CodeExecutionService:
         if session_id not in self.active_containers and session_id not in self.active_sessions:
             raise ValueError(f"Session {session_id} not found")
 
-        # Get the language from the appropriate session storage
-        if session_id in self.active_sessions:
-            language = self.active_sessions[session_id]['language']
-        elif session_id in self.active_containers:
-            language = self.active_containers[session_id]['language']
-        else:
-            language = 'python'
+        # Get the language and container info
+        if session_id in self.active_containers:
+            container_info = self.active_containers[session_id]
+            language = container_info['language']
+            container = container_info['container']
 
-        # Check if code might need interactive input using the language-aware function
-        has_input_calls = self._has_input_requirements(code, language)
+            # Use the existing code file or create a new one if needed
+            if 'code_path' not in container_info:
+                # First execution for this session, create the code file
+                file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
+                code_filename = f"code_main.{file_ext}"
+                code_dir = "./workspace"
+                os.makedirs(code_dir, exist_ok=True)
+                code_path = os.path.join(code_dir, code_filename)
+                container_info['code_path'] = code_path
+            else:
+                # Use the existing code file
+                code_path = container_info['code_path']
 
-        if has_input_calls and session_id in self.active_sessions:
-            # Use the interactive execution method for code that might need input
-            result = await self._execute_with_interactive_input(session_id, code, timeout, callback)
-        else:
-            # For code without input or Docker-based execution, use the standard method
-            result = await self.execute_code(session_id, code, input_data, timeout)
+            # Write the updated code to the file
+            with open(code_path, "w") as f:
+                f.write(code)
 
-            if callback:
-                await callback({
-                    'output': result['output'],
-                    'error': result['error'],
-                    'exit_code': result['exit_code'],
-                    'complete': True
-                })
+            code_filename = os.path.basename(code_path)
 
-        return result
+            # Check if code might need interactive input using the language-aware function
+            has_input_calls = self._has_input_requirements(code, language)
 
-    async def _execute_with_interactive_input(self, session_id, code, timeout, callback=None):
+            if has_input_calls:
+                # Create a fifo for interactive input if needed
+                fifo_path = f"{code_dir}/input_fifo_{session_id}"
+                if not os.path.exists(fifo_path):
+                    os.mkfifo(fifo_path)
+
+                # Start background task to feed input to the fifo when available
+                asyncio.create_task(self._handle_interactive_input(
+                    session_id, fifo_path, container_info, callback))
+
+                # Execute with interactive input handling via fifo
+                if language == 'python':
+                    cmd = f"python /code/{code_filename} < /code/input_fifo_{session_id}"
+
+                elif language == 'cpp':
+                    compile_cmd = f"g++ /code/{code_filename} -o /code/a.out"
+                    run_cmd = f"/code/a.out < /code/input_fifo_{session_id}"
+                    cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
+
+                elif language == 'c':
+                    compile_cmd = f"gcc /code/{code_filename} -o /code/a.out"
+                    run_cmd = f"/code/a.out < /code/input_fifo_{session_id}"
+                    cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
+
+                # Execute in container with output streaming
+                exec_id = container.exec_run(
+                    cmd=cmd,
+                    tty=True,
+                    detach=True,
+                    stream=True
+                )
+
+                # Store exec_id for this session
+                container_info['current_exec'] = exec_id
+
+                # Stream output back to the client
+                async for output in self._stream_container_output(exec_id, container, callback):
+                    pass
+
+                return {
+                    'exit_code': 0,  # We don't know the exact exit code in streaming mode
+                    'output': "Execution completed",
+                    'error': None
+                }
+
+            else:
+                # For code without input or Docker-based execution, use the standard method
+                result = await self.execute_code(session_id, code, input_data, timeout)
+
+                if callback:
+                    await callback({
+                        'output': result['output'],
+                        'error': result['error'],
+                        'exit_code': result['exit_code'],
+                        'complete': True
+                    })
+
+                return result
+
         """Execute code with interactive input support"""
         session_info = self.active_sessions[session_id]
         language = session_info['language']
@@ -378,12 +414,42 @@ class CodeExecutionService:
             cmd = ["python", code_path]
         elif language == 'javascript':
             cmd = ["node", code_path]
-        elif language == 'java':
-            cmd = ["java", code_path]
         elif language == 'cpp':
-            cmd = ["g++", code_path, "-o", "a.out"]
-        elif language == 'c':
-            cmd = ["gcc", code_path, "-o", "a.out"]
+            compile_cmd = ["g++", code_path, "-o", f"{workspace_path}/a.out"]
+            try:
+                compile_process = await asyncio.create_subprocess_exec(
+                    *compile_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                _, stderr = await compile_process.communicate()
+                if compile_process.returncode != 0:
+                    if callback:
+                        await callback({
+                            'output': '',
+                            'complete': True,
+                            'exit_code': compile_process.returncode,
+                            'error': stderr.decode()
+                        })
+                    return {
+                        'exit_code': compile_process.returncode,
+                        'output': '',
+                        'error': stderr.decode()
+                    }
+                cmd = [f"{workspace_path}/a.out"]
+            except Exception as e:
+                if callback:
+                    await callback({
+                        'output': '',
+                        'complete': True,
+                        'exit_code': 1,
+                        'error': f"Compilation error: {str(e)}"
+                    })
+                return {
+                    'exit_code': 1,
+                    'output': '',
+                    'error': f"Compilation error: {str(e)}"
+                }
         else:
             return {
                 'exit_code': 1,
@@ -417,7 +483,7 @@ class CodeExecutionService:
                 output_buffer += chunk_output
 
                 # Check if this might be an input prompt
-                if chunk_output.endswith(': ') or 'input(' in chunk_output.lower():
+                if chunk_output.endswith(': ') or 'input(' in chunk_output.lower() or 'Enter' in chunk_output:
                     waiting_for_input = True
 
                 # Send the output chunk
@@ -559,6 +625,100 @@ class CodeExecutionService:
         else:
             logger.warning(f"Session {session_id} not found for termination")
             return False
+
+    async def _handle_interactive_input(self, session_id, fifo_path, container_info, callback):
+        """Handle interactive input via named pipe to container"""
+        if 'input_queue' not in container_info:
+            container_info['input_queue'] = asyncio.Queue()
+
+        input_queue = container_info['input_queue']
+
+        try:
+            # Open the fifo for writing in non-blocking mode
+            fifo = open(fifo_path, 'w')
+
+            while True:
+                # Wait for input to become available
+                logger.debug(f"Waiting for input for session {session_id}")
+                input_data = await input_queue.get()
+                logger.debug(f"Received input: {input_data}")
+
+                # Write input to the fifo
+                fifo.write(f"{input_data}\n")
+                fifo.flush()
+
+                # Notify the client that input was processed
+                if callback:
+                    await callback({
+                        'input_processed': True,
+                        'complete': False
+                    })
+
+        except Exception as e:
+            logger.error(f"Error in interactive input handling: {e}")
+        finally:
+            try:
+                fifo.close()
+            except:
+                pass
+
+    async def _stream_container_output(self, exec_id, container, callback):
+        """Stream output from a container execution"""
+        output_buffer = ""
+        waiting_for_input = False
+
+        # Get the output stream from the exec
+        for chunk in exec_id.output:
+            if chunk:
+                try:
+                    # Decode the output chunk
+                    chunk_output = chunk.decode('utf-8')
+                    output_buffer += chunk_output
+
+                    # Check if this might be an input prompt
+                    if (chunk_output.endswith(': ') or
+                        chunk_output.endswith('? ') or
+                        'input' in chunk_output.lower() or
+                        'enter' in chunk_output.lower()):
+                        waiting_for_input = True
+
+                    # Send the output chunk through callback
+                    if callback:
+                        await callback({
+                            'output': chunk_output,
+                            'waiting_for_input': waiting_for_input,
+                            'complete': False,
+                            'exit_code': None,
+                            'error': None
+                        })
+
+                    # Yield the chunk so the caller can process it too if needed
+                    yield chunk_output
+
+                    # If we detected an input prompt, pause here until input is provided
+                    if waiting_for_input:
+                        # The input will be handled by _handle_interactive_input
+                        # This just pauses output processing until more output is available
+                        await asyncio.sleep(0.1)
+
+                except Exception as e:
+                    logger.error(f"Error processing container output: {e}")
+                    if callback:
+                        await callback({
+                            'output': '',
+                            'complete': False,
+                            'exit_code': None,
+                            'error': f"Error processing output: {str(e)}"
+                        })
+
+        # Send completion notification
+        if callback:
+            await callback({
+                'output': '',
+                'complete': True,
+                'exit_code': 0,  # We don't know the exact exit code in streaming mode
+                'error': None
+            })
 
 
 # Create a singleton instance
