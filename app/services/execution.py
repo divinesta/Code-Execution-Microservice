@@ -130,13 +130,18 @@ class CodeExecutionService:
             language = container_info['language']
             container = container_info['container']
 
-            # Use a common host directory (instead of a subdirectory based on the session id)
-            code_dir = "./workspace"
-            os.makedirs(code_dir, exist_ok=True)
-            file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
-            unique_filename = f"code_{uuid.uuid4().hex}.{file_ext}"
-            code_path = os.path.join(code_dir, unique_filename)
-            logger.debug(f"Writing code file at: {code_path}")
+            # Use the existing code file or create a new one if needed
+            if 'code_path' not in container_info:
+                # First execution for this session, create the code file
+                file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
+                code_filename = f"code_{uuid.uuid4().hex}.{file_ext}"
+                code_dir = "./workspace"
+                os.makedirs(code_dir, exist_ok=True)
+                code_path = os.path.join(code_dir, code_filename)
+                container_info['code_path'] = code_path
+            else:
+                # Use the existing code file
+                code_path = container_info['code_path']
 
             with open(code_path, "w") as f:
                 f.write(code)
@@ -159,15 +164,15 @@ class CodeExecutionService:
 
             # Prepare the command based on language
             if language == 'python':
-                cmd = f"python /code/{unique_filename}"
+                cmd = f"python /code/{code_filename}"
 
             elif language == 'cpp':
-                compile_cmd = f"g++ /code/{unique_filename} -o /code/a.out"
+                compile_cmd = f"g++ /code/{code_filename} -o /code/a.out"
                 run_cmd = f"/code/a.out"
                 cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
 
             elif language == 'c':
-                compile_cmd = f"gcc /code/{unique_filename} -o /code/a.out"
+                compile_cmd = f"gcc /code/{code_filename} -o /code/a.out"
                 run_cmd = f"/code/a.out"
                 cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
 
@@ -280,7 +285,9 @@ class CodeExecutionService:
     def _has_input_requirements(self, code, language):
         """Check if code likely requires user input based on language"""
         if language == 'python':
-            return "input(" in code
+            has_input = "input(" in code
+            logger.info(f"Python code input requirements check: {has_input}")
+            return has_input
         elif language == 'javascript':
             return "prompt(" in code or "readline" in code or "process.stdin" in code
         elif language == 'java':
@@ -679,7 +686,7 @@ class CodeExecutionService:
                     if (chunk_output.endswith(': ') or
                         chunk_output.endswith('? ') or
                         'input' in chunk_output.lower() or
-                        'enter' in chunk_output.lower()):
+                            'enter' in chunk_output.lower()):
                         waiting_for_input = True
 
                     # Send the output chunk through callback
