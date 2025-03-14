@@ -146,6 +146,7 @@ class CodeExecutionService:
             with open(code_path, "w") as f:
                 f.write(code)
 
+            code_dir = "./workspace"
             code_filename = os.path.basename(code_path)
 
             logger.info(f"Successfully wrote code file to: {code_path}")
@@ -330,13 +331,13 @@ class CodeExecutionService:
                 container_info['code_path'] = code_path
             else:
                 # Use the existing code file
-                code_dir = "./workspace"
                 code_path = container_info['code_path']
 
             # Write the updated code to the file
             with open(code_path, "w") as f:
                 f.write(code)
 
+            code_dir = "./workspace"
             code_filename = os.path.basename(code_path)
 
             # Check if code might need interactive input using the language-aware function
