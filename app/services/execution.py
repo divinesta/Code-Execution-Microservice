@@ -142,6 +142,7 @@ class CodeExecutionService:
             else:
                 # Use the existing code file
                 code_path = container_info['code_path']
+                code_dir = os.path.dirname(code_path)
 
             with open(code_path, "w") as f:
                 f.write(code)
@@ -329,6 +330,7 @@ class CodeExecutionService:
             else:
                 # Use the existing code file
                 code_path = container_info['code_path']
+                code_dir = os.path.dirname(code_path)
 
             # Write the updated code to the file
             with open(code_path, "w") as f:
