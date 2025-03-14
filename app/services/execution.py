@@ -330,6 +330,7 @@ class CodeExecutionService:
                 container_info['code_path'] = code_path
             else:
                 # Use the existing code file
+                code_dir = "./workspace"
                 code_path = container_info['code_path']
 
             # Write the updated code to the file
