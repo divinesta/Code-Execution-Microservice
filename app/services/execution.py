@@ -441,6 +441,7 @@ class CodeExecutionService:
                     if line:
                         output = line.decode('utf-8')
                         output_buffer += output
+                        logger.debug(f"Read output chunk: {output.strip()}")
                         if callback:
                             await callback({
                                 'output': output,
@@ -451,6 +452,7 @@ class CodeExecutionService:
                         has_output = True
                     else:
                         has_output = False
+                        logger.debug("No more output to read.")
 
                 output_buffer = ""
                 has_output = True
