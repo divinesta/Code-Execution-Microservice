@@ -347,7 +347,8 @@ class CodeExecutionService:
 
                 # Execute with interactive input handling
                 if language == 'python':
-                    cmd = f"python /code/{code_filename}"
+                    # cmd = f"python /code/{code_filename}"
+                    cmd = f"python {code_path}"
                 elif language == 'cpp':
                     compile_cmd = ["g++", code_path, "-o", f"{code_dir}/a.out"]
                     try:
