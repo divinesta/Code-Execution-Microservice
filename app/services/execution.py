@@ -477,7 +477,7 @@ class CodeExecutionService:
             logger.debug(f"Executing code command: {cmd}")
             try:
                 process = await asyncio.create_subprocess_exec(
-                    cmd.split(),
+                    *cmd.split(),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
