@@ -142,12 +142,11 @@ class CodeExecutionService:
             else:
                 # Use the existing code file
                 code_path = container_info['code_path']
+                code_dir = "./workspace"
+                code_filename = os.path.basename(code_path)
 
             with open(code_path, "w") as f:
                 f.write(code)
-
-            code_dir = "./workspace"
-            code_filename = os.path.basename(code_path)
 
             logger.info(f"Successfully wrote code file to: {code_path}")
 
@@ -332,60 +331,178 @@ class CodeExecutionService:
             else:
                 # Use the existing code file
                 code_path = container_info['code_path']
+                code_dir = "./workspace"
+                code_filename = os.path.basename(code_path)
 
             # Write the updated code to the file
             with open(code_path, "w") as f:
                 f.write(code)
 
-            code_dir = "./workspace"
-            code_filename = os.path.basename(code_path)
-
             # Check if code might need interactive input using the language-aware function
             has_input_calls = self._has_input_requirements(code, language)
 
             if has_input_calls:
-                # Create a fifo for interactive input if needed
-                fifo_path = f"{code_dir}/input_fifo_{session_id}"
-                if not os.path.exists(fifo_path):
-                    os.mkfifo(fifo_path)
+                # Create a queue to handle interactive input
+                input_queue = asyncio.Queue()
 
-                # Start background task to feed input to the fifo when available
-                asyncio.create_task(self._handle_interactive_input(
-                    session_id, fifo_path, container_info, callback))
-
-                # Execute with interactive input handling via fifo
+                # Execute with interactive input handling
                 if language == 'python':
-                    cmd = f"python /code/{code_filename} < /code/input_fifo_{session_id}"
-
+                    cmd = f"python /code/{code_filename}"
                 elif language == 'cpp':
-                    compile_cmd = f"g++ /code/{code_filename} -o /code/a.out"
-                    run_cmd = f"/code/a.out < /code/input_fifo_{session_id}"
-                    cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
-
+                    compile_cmd = ["g++", code_path, "-o", f"{code_dir}/a.out"]
+                    try:
+                        compile_process = await asyncio.create_subprocess_exec(
+                            *compile_cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        _, stderr = await compile_process.communicate()
+                        if compile_process.returncode != 0:
+                            if callback:
+                                await callback({
+                                    'output': '',
+                                    'complete': True,
+                                    'exit_code': compile_process.returncode,
+                                    'error': stderr.decode()
+                                })
+                            return {
+                                'exit_code': compile_process.returncode,
+                                'output': '',
+                                'error': stderr.decode()
+                            }
+                        cmd = [f"{code_dir}/a.out"]
+                    except Exception as e:
+                        if callback:
+                            await callback({
+                                'output': '',
+                                'complete': True,
+                                'exit_code': 1,
+                                'error': f"Compilation error: {str(e)}"
+                            })
+                        return {
+                            'exit_code': 1,
+                            'output': '',
+                            'error': f"Compilation error: {str(e)}"
+                        }
                 elif language == 'c':
-                    compile_cmd = f"gcc /code/{code_filename} -o /code/a.out"
-                    run_cmd = f"/code/a.out < /code/input_fifo_{session_id}"
-                    cmd = f"sh -c '{compile_cmd} && {run_cmd}'"
+                    compile_cmd = ["gcc", code_path, "-o", f"{code_dir}/a.out"]
+                    try:
+                        compile_process = await asyncio.create_subprocess_exec(
+                            *compile_cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        _, stderr = await compile_process.communicate()
+                        if compile_process.returncode != 0:
+                            if callback:
+                                await callback({
+                                    'output': '',
+                                    'complete': True,
+                                    'exit_code': compile_process.returncode,
+                                    'error': stderr.decode()
+                                })
+                            return {
+                                'exit_code': compile_process.returncode,
+                                'output': '',
+                                'error': stderr.decode()
+                            }
+                        cmd = [f"{code_dir}/a.out"]
+                    except Exception as e:
+                        if callback:
+                            await callback({
+                                'output': '',
+                                'complete': True,
+                                'exit_code': 1,
+                                'error': f"Compilation error: {str(e)}"
+                            })
+                        return {
+                            'exit_code': 1,
+                            'output': '',
+                            'error': f"Compilation error: {str(e)}"
+                        }
+                else:
+                    return {
+                        'exit_code': 1,
+                        'output': "",
+                        'error': f"Language {language} not supported in streaming mode"
+                    }
 
-                # Execute in container with output streaming
-                exec_id = container.exec_run(
-                    cmd=cmd,
-                    tty=True,
-                    detach=True,
-                    stream=True
+                process = await asyncio.create_subprocess_exec(
+                    *cmd.split(),
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
 
-                # Store exec_id for this session
-                container_info['current_exec'] = exec_id
+                async def read_output():
+                    nonlocal output_buffer, has_output
+                    line = await process.stdout.readline()
+                    if line:
+                        output = line.decode('utf-8')
+                        output_buffer += output
+                        if callback:
+                            await callback({
+                                'output': output,
+                                'complete': False,
+                                'exit_code': None,
+                                'error': None
+                            })
+                        has_output = True
+                    else:
+                        has_output = False
 
-                # Stream output back to the client
-                async for output in self._stream_container_output(exec_id, container, callback):
-                    pass
+                output_buffer = ""
+                has_output = True
+                waiting_for_input = False
+
+                while process.returncode is None:
+                    if waiting_for_input:
+                        try:
+                            user_input = await asyncio.wait_for(input_queue.get(), timeout=timeout)
+                            process.stdin.write(f"{user_input}\n".encode())
+                            await process.stdin.drain()
+                            waiting_for_input = False
+                            await read_output()
+                        except asyncio.TimeoutError:
+                            process.kill()
+                            if callback:
+                                await callback({
+                                    'output': '\nInput timeout exceeded',
+                                    'complete': True,
+                                    'exit_code': 1,
+                                    'error': 'Timeout waiting for input'
+                                })
+                            return {
+                                'exit_code': 1,
+                                'output': output_buffer + '\nInput timeout exceeded',
+                                'error': 'Timeout waiting for input'
+                            }
+                    elif has_output:
+                        has_output = await read_output()
+                    else:
+                        try:
+                            await asyncio.wait_for(process.wait(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            continue
+
+                # Read any remaining output
+                stdout, stderr = await process.communicate()
+                final_output = stdout.decode()
+                output_buffer += final_output
+                error = stderr.decode() if stderr else None
+
+                if callback:
+                    await callback({
+                        'output': final_output,
+                        'complete': True,
+                        'exit_code': process.returncode,
+                        'error': error
+                    })
 
                 return {
-                    'exit_code': 0,  # We don't know the exact exit code in streaming mode
-                    'output': "Execution completed",
-                    'error': None
+                    'exit_code': process.returncode,
+                    'output': output_buffer,
+                    'error': error
                 }
 
             else:
