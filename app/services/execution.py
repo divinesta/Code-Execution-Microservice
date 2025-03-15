@@ -307,6 +307,8 @@ class CodeExecutionService:
 
     async def execute_code_with_streaming(self, session_id, code, input_data=None, timeout=None, callback=None):
         """Execute code with streaming output via callback"""
+        logger.debug("Entering execute_code_with_streaming")
+
         if timeout is None:
             timeout = settings.MAX_EXECUTION_TIME
 
@@ -435,6 +437,8 @@ class CodeExecutionService:
                     stderr=asyncio.subprocess.PIPE
                 )
 
+                logger.debug("Before read_output definition")
+
                 async def read_output():
                     nonlocal output_buffer, has_output
                     line = await process.stdout.readline()
@@ -454,11 +458,15 @@ class CodeExecutionService:
                         has_output = False
                         logger.debug("No more output to read.")
 
+                logger.debug("After read_output definition")
+
                 output_buffer = ""
                 has_output = True
                 waiting_for_input = False
 
                 while process.returncode is None:
+                    logger.debug(
+                        "Entering while loop in execute_code_with_streaming")
                     if waiting_for_input:
                         try:
                             user_input = await asyncio.wait_for(input_queue.get(), timeout=timeout)
@@ -481,7 +489,9 @@ class CodeExecutionService:
                                 'error': 'Timeout waiting for input'
                             }
                     elif has_output:
+                        logger.debug("Before has_output = await read_output()")
                         has_output = await read_output()
+                        logger.debug("After has_output = await read_output()")
                     else:
                         try:
                             await asyncio.wait_for(process.wait(), timeout=0.5)
