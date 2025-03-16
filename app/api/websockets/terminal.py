@@ -55,7 +55,8 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                 'output': chunk_data.get('output', ''),
                                 'complete': chunk_data.get('complete', False),
                                 'exit_code': chunk_data.get('exit_code'),
-                                'error': chunk_data.get('error')
+                                'error': chunk_data.get('error'),
+                                'waiting_for_input': chunk_data.get('waiting_for_input', False)
                             })
 
                             # If there are multiple connections for this session,
@@ -66,7 +67,8 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                         await conn.send_json({
                                             'type': 'terminal.code_broadcast',
                                             'output': chunk_data.get('output', ''),
-                                            'complete': chunk_data.get('complete', False)
+                                            'complete': chunk_data.get('complete', False),
+                                            'waiting_for_input': chunk_data.get('waiting_for_input', False)
                                         })
 
                         # Execute with streaming

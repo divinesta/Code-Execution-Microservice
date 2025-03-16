@@ -325,9 +325,11 @@ class CodeExecutionService:
             container_info = self.active_containers[session_id]
             language = container_info['language']
             container = container_info['container']
-            logger.debug(f"Using Docker container for session {session_id}, language: {language}")
+            logger.debug(
+                f"Using Docker container for session {session_id}, language: {language}")
         else:
-            logger.error(f"Session {session_id} should be in Docker containers but wasn't found.")
+            logger.error(
+                f"Session {session_id} should be in Docker containers but wasn't found.")
             return {
                 'exit_code': 1,
                 'output': "",
@@ -363,10 +365,12 @@ class CodeExecutionService:
 
         # See whether the code requires interactive input (e.g., using input() in Python)
         has_input_calls = self._has_input_requirements(code, language)
-        logger.debug(f"Input requirements check - has_input_calls: {has_input_calls}")
+        logger.debug(
+            f"Input requirements check - has_input_calls: {has_input_calls}")
 
         if has_input_calls:
-            logger.debug("Code has input calls, setting up interactive input handling")
+            logger.debug(
+                "Code has input calls, setting up interactive input handling")
             # Reuse the container's input_queue so that input responses from WebSocket
             # get processed by the running process.
             if "input_queue" not in container_info:
@@ -389,7 +393,8 @@ class CodeExecutionService:
                     logger.debug("C++ compilation process started")
                     _, stderr = await compile_process.communicate()
                     if compile_process.returncode != 0:
-                        logger.error(f"C++ compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
+                        logger.error(
+                            f"C++ compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
                         if callback:
                             await callback({
                                 'output': '',
@@ -430,7 +435,8 @@ class CodeExecutionService:
                     logger.debug("C compilation process started")
                     _, stderr = await compile_process.communicate()
                     if compile_process.returncode != 0:
-                        logger.error(f"C compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
+                        logger.error(
+                            f"C compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
                         if callback:
                             await callback({
                                 'output': '',
@@ -501,7 +507,8 @@ class CodeExecutionService:
                     if (output.endswith(": ") or output.endswith("? ") or
                             "input" in output.lower() or "enter" in output.lower()):
                         waiting_for_input = True
-                        logger.debug("Detected input prompt, setting waiting_for_input=True")
+                        logger.debug(
+                            "Detected input prompt, setting waiting_for_input=True")
                     if callback:
                         await callback({
                             'output': output,
@@ -546,13 +553,15 @@ class CodeExecutionService:
                         }
                 elif has_output:
                     has_output = await read_output()
-                    logger.debug(f"read_output returned, has_output is now: {has_output}")
+                    logger.debug(
+                        f"read_output returned, has_output is now: {has_output}")
                 else:
                     logger.debug("has_output is False, waiting for process...")
                     try:
                         await asyncio.wait_for(process.wait(), timeout=0.5)
                     except asyncio.TimeoutError:
-                        logger.debug("Short timeout in process.wait() expired, continuing loop")
+                        logger.debug(
+                            "Short timeout in process.wait() expired, continuing loop")
                         continue
                 logger.debug("--- While loop iteration end ---")
 
@@ -580,7 +589,8 @@ class CodeExecutionService:
                 'error': error
             }
         else:
-            logger.debug("Code does not have input calls, using standard execute_code method")
+            logger.debug(
+                "Code does not have input calls, using standard execute_code method")
             result = await self.execute_code(session_id, code, input_data, timeout)
             if callback:
                 await callback({
