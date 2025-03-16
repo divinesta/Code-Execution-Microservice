@@ -307,7 +307,6 @@ class CodeExecutionService:
         return False
 
     async def execute_code_with_streaming(self, session_id, code, input_data=None, timeout=None, callback=None):
-        """Execute code with streaming output via callback"""
         logger.debug("Entering execute_code_with_streaming")
 
         if timeout is None:
@@ -321,25 +320,22 @@ class CodeExecutionService:
 
         logger.debug("Session found in active containers or sessions")
 
-        # Get the language and container info
+        # Use Docker container: if not, we return an error since streaming mode supports only Docker-based execution
         if session_id in self.active_containers:
             container_info = self.active_containers[session_id]
             language = container_info['language']
             container = container_info['container']
-            logger.debug(
-                f"Using Docker container for session {session_id}, language: {language}")
+            logger.debug(f"Using Docker container for session {session_id}, language: {language}")
         else:
-            logger.error(
-                f"Session {session_id} should be in Docker containers but wasn't found.")
-            return {  # Returning here as fallback to process based execution is removed in streaming mode
+            logger.error(f"Session {session_id} should be in Docker containers but wasn't found.")
+            return {
                 'exit_code': 1,
                 'output': "",
                 'error': f"Session {session_id} not found in Docker containers for streaming execution."
             }
 
-        # Use the existing code file or create a new one if needed
+        # Create (or reuse) the code file for this session
         if 'code_path' not in container_info:
-            # First execution for this session, create the code file
             file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
             code_filename = f"code_main.{file_ext}"
             code_dir = "./workspace"
@@ -348,14 +344,11 @@ class CodeExecutionService:
             container_info['code_path'] = code_path
             logger.debug(f"Creating new code file: {code_path}")
         else:
-            # Use the existing code file
             code_path = container_info['code_path']
-            # Ensure code_dir is correctly set
             code_dir = os.path.dirname(code_path)
             code_filename = os.path.basename(code_path)
             logger.debug(f"Using existing code file: {code_path}")
 
-        # Write the updated code to the file
         try:
             with open(code_path, "w") as f:
                 f.write(code)
@@ -368,18 +361,19 @@ class CodeExecutionService:
                 'error': f"Error writing code file: {str(e)}"
             }
 
-        # Check if code might need interactive input
+        # See whether the code requires interactive input (e.g., using input() in Python)
         has_input_calls = self._has_input_requirements(code, language)
-        logger.debug(
-            f"Input requirements check - has_input_calls: {has_input_calls}")
+        logger.debug(f"Input requirements check - has_input_calls: {has_input_calls}")
 
         if has_input_calls:
-            logger.debug(
-                "Code has input calls, setting up interactive input handling")
-            # Create a queue to handle interactive input
-            input_queue = asyncio.Queue()
+            logger.debug("Code has input calls, setting up interactive input handling")
+            # Reuse the container's input_queue so that input responses from WebSocket
+            # get processed by the running process.
+            if "input_queue" not in container_info:
+                container_info["input_queue"] = asyncio.Queue()
+            input_queue = container_info["input_queue"]
 
-            # Execute with interactive input handling
+            # Prepare the command based on language
             if language == 'python':
                 cmd = f"python {code_path}"  # Using full path
                 logger.debug(f"Python command: {cmd}")
@@ -395,8 +389,7 @@ class CodeExecutionService:
                     logger.debug("C++ compilation process started")
                     _, stderr = await compile_process.communicate()
                     if compile_process.returncode != 0:
-                        logger.error(
-                            f"C++ compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
+                        logger.error(f"C++ compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
                         if callback:
                             await callback({
                                 'output': '',
@@ -437,8 +430,7 @@ class CodeExecutionService:
                     logger.debug("C compilation process started")
                     _, stderr = await compile_process.communicate()
                     if compile_process.returncode != 0:
-                        logger.error(
-                            f"C compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
+                        logger.error(f"C compilation failed, exit code: {compile_process.returncode}, stderr: {stderr.decode()}")
                         if callback:
                             await callback({
                                 'output': '',
@@ -477,7 +469,7 @@ class CodeExecutionService:
             logger.debug(f"Executing code command: {cmd}")
             try:
                 process = await asyncio.create_subprocess_exec(
-                    *cmd.split(),
+                    *(cmd.split() if isinstance(cmd, str) else cmd),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
@@ -493,52 +485,40 @@ class CodeExecutionService:
 
             logger.debug("Before read_output definition")
 
+            output_buffer = ""
+            has_output = True
+            waiting_for_input = False
+
             async def read_output():
                 nonlocal output_buffer, has_output, waiting_for_input
-                # Log when read_output is entered
                 logger.debug("Entering read_output")
                 line = await process.stdout.readline()
                 if line:
                     output = line.decode('utf-8')
                     output_buffer += output
                     logger.debug(f"Read output chunk: {output.strip()}")
-
-                    # Check if this looks like an input prompt
+                    # Detect an input prompt similar to what a local terminal would show
                     if (output.endswith(": ") or output.endswith("? ") or
                             "input" in output.lower() or "enter" in output.lower()):
                         waiting_for_input = True
-                        logger.debug(
-                            "Detected input prompt, setting waiting_for_input=True")
-
+                        logger.debug("Detected input prompt, setting waiting_for_input=True")
                     if callback:
                         await callback({
                             'output': output,
-                            'waiting_for_input': waiting_for_input,  # Add this to inform client
+                            'waiting_for_input': waiting_for_input,
                             'complete': False,
                             'exit_code': None,
                             'error': None
                         })
                     has_output = True
-                    # Log before exiting
-                    logger.debug("Exiting read_output - has_output=True")
                 else:
                     has_output = False
-                    # Log when no output
-                    logger.debug(
-                        "No more output to read in read_output - has_output=False")
-                # Log when read_output is exited
+                    logger.debug("No more output to read in read_output")
                 logger.debug("Exiting read_output")
                 return has_output
 
-            logger.debug("After read_output definition")
-
-            output_buffer = ""
-            has_output = True
-            waiting_for_input = False
-
             logger.debug("Entering main execution while loop")
             while process.returncode is None:
-                # Start of loop iteration log
                 logger.debug("--- While loop iteration start ---")
                 if waiting_for_input:
                     logger.debug("Waiting for input...")
@@ -565,22 +545,17 @@ class CodeExecutionService:
                             'error': 'Timeout waiting for input'
                         }
                 elif has_output:
-                    logger.debug("has_output is True, calling read_output")
                     has_output = await read_output()
-                    logger.debug(
-                        f"read_output returned, has_output is now: {has_output}")
+                    logger.debug(f"read_output returned, has_output is now: {has_output}")
                 else:
                     logger.debug("has_output is False, waiting for process...")
                     try:
                         await asyncio.wait_for(process.wait(), timeout=0.5)
                     except asyncio.TimeoutError:
-                        logger.debug(
-                            "Short timeout in process.wait() expired, continuing loop")
+                        logger.debug("Short timeout in process.wait() expired, continuing loop")
                         continue
-                # End of loop iteration log
                 logger.debug("--- While loop iteration end ---")
 
-            # Read any remaining output
             logger.debug("Process finished, reading remaining output")
             stdout, stderr = await process.communicate()
             final_output = stdout.decode()
@@ -604,13 +579,9 @@ class CodeExecutionService:
                 'output': output_buffer,
                 'error': error
             }
-
         else:
-            logger.debug(
-                "Code does not have input calls, using standard execute_code method")
-            # For code without input or Docker-based execution, use the standard method
+            logger.debug("Code does not have input calls, using standard execute_code method")
             result = await self.execute_code(session_id, code, input_data, timeout)
-
             if callback:
                 await callback({
                     'output': result['output'],
@@ -618,7 +589,6 @@ class CodeExecutionService:
                     'exit_code': result['exit_code'],
                     'complete': True
                 })
-
             return result
 
     async def terminate_session(self, session_id):
