@@ -342,7 +342,7 @@ class CodeExecutionService:
             # First execution for this session, create the code file
             file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
             code_filename = f"code_main.{file_ext}"
-            code_dir = "/code"  # Changed to /code to match container's workspace
+            code_dir = "./workspace"
             os.makedirs(code_dir, exist_ok=True)
             code_path = os.path.join(code_dir, code_filename)
             container_info['code_path'] = code_path
@@ -494,7 +494,7 @@ class CodeExecutionService:
             logger.debug("Before read_output definition")
 
             async def read_output():
-                nonlocal output_buffer, has_output
+                nonlocal output_buffer, has_output, waiting_for_input
                 # Log when read_output is entered
                 logger.debug("Entering read_output")
                 line = await process.stdout.readline()
@@ -502,9 +502,18 @@ class CodeExecutionService:
                     output = line.decode('utf-8')
                     output_buffer += output
                     logger.debug(f"Read output chunk: {output.strip()}")
+
+                    # Check if this looks like an input prompt
+                    if (output.endswith(": ") or output.endswith("? ") or
+                            "input" in output.lower() or "enter" in output.lower()):
+                        waiting_for_input = True
+                        logger.debug(
+                            "Detected input prompt, setting waiting_for_input=True")
+
                     if callback:
                         await callback({
                             'output': output,
+                            'waiting_for_input': waiting_for_input,  # Add this to inform client
                             'complete': False,
                             'exit_code': None,
                             'error': None
