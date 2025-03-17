@@ -5,6 +5,7 @@ from typing import Dict, List
 import asyncio
 
 from app.services.execution import execution_service
+from app.services.execution_pty import execution_pty_service
 from app.core.config import settings
 
 router = APIRouter()
@@ -12,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 # Store active WebSocket connections
 active_connections: Dict[str, List[WebSocket]] = {}
+
+# Create a separate instance of execution_pty_service
+pty_execution_service = execution_pty_service.ExecutionPtyService()
 
 
 @router.websocket("/ws/terminal/{session_id}")
@@ -70,6 +74,7 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                             'complete': chunk_data.get('complete', False),
                                             'waiting_for_input': chunk_data.get('waiting_for_input', False)
                                         })
+
 
                         # Execute with streaming
                         await execution_service.execute_code_with_streaming(

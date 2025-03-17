@@ -6,6 +6,12 @@ import shlex
 import asyncio
 from datetime import datetime
 import shutil
+import pty
+import fcntl
+import select
+import signal
+import termios
+import errno
 
 from app.core.config import settings
 
@@ -379,7 +385,7 @@ class CodeExecutionService:
 
             # Prepare the command based on language
             if language == 'python':
-                cmd = f"python {code_path}"  # Using full path
+                cmd = f"python -u {code_path}"  # Using full path
                 logger.debug(f"Python command: {cmd}")
             elif language == 'cpp':
                 compile_cmd = ["g++", code_path, "-o", f"{code_dir}/a.out"]
@@ -475,7 +481,7 @@ class CodeExecutionService:
             logger.debug(f"Executing code command: {cmd}")
             try:
                 process = await asyncio.create_subprocess_exec(
-                    *(cmd.split() if isinstance(cmd, str) else cmd),
+                    *cmd,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
@@ -741,6 +747,232 @@ class CodeExecutionService:
                 'exit_code': 0,  # We don't know the exact exit code in streaming mode
                 'error': None
             })
+
+    async def execute_code_with_pty(self, session_id, code, timeout=None, callback=None):
+        """Execute code in a pseudo-terminal for proper input handling"""
+        logger.debug("Entering execute_code_with_pty")
+
+        if timeout is None:
+            timeout = settings.MAX_EXECUTION_TIME
+
+        if session_id not in self.active_containers and session_id not in self.active_sessions:
+            logger.error(f"Session {session_id} not found")
+            raise ValueError(f"Session {session_id} not found")
+
+        # Get session info
+        if session_id in self.active_sessions:
+            session_info = self.active_sessions[session_id]
+            language = session_info['language']
+            workspace_path = session_info['workspace_path']
+        else:
+            logger.error(f"Session {session_id} not found in active sessions")
+            return {
+                'exit_code': 1,
+                'output': "",
+                'error': f"Session {session_id} not found in active sessions"
+            }
+
+        # Create code file
+        file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
+        code_path = f"{workspace_path}/code.{file_ext}"
+
+        with open(code_path, "w") as f:
+            f.write(code)
+
+        logger.debug(f"Successfully wrote code to file: {code_path}")
+
+        # Prepare command based on language
+        if language == 'python':
+            cmd = ["python", code_path]
+        elif language == 'javascript':
+            cmd = ["node", code_path]
+        else:
+            return {
+                'exit_code': 1,
+                'output': "",
+                'error': f"Language {language} not supported in PTY mode"
+            }
+
+        # Create PTY
+        master, slave = pty.openpty()
+
+        # Set terminal to raw mode
+        old_attr = termios.tcgetattr(slave)
+        new_attr = termios.tcgetattr(slave)
+        new_attr[3] = new_attr[3] & ~termios.ECHO & ~termios.ICANON
+        termios.tcsetattr(slave, termios.TCSANOW, new_attr)
+
+        # Make the master end non-blocking
+        fl = fcntl.fcntl(master, fcntl.F_GETFL)
+        fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+        # Set up variables
+        output_buffer = ""
+        waiting_for_input = False
+
+        # Set up input queue if needed
+        if 'input_queue' not in session_info:
+            session_info['input_queue'] = asyncio.Queue()
+        input_queue = session_info['input_queue']
+
+        # Start the process
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                start_new_session=True
+            )
+
+            # Close the slave end as the child has it
+            os.close(slave)
+
+            # Read output loop
+            async def read_pty_output():
+                nonlocal output_buffer, waiting_for_input
+                buffer = b''
+                try:
+                    r, w, e = select.select([master], [], [], 0.1)
+                    if master in r:
+                        try:
+                            chunk = os.read(master, 1024)
+                            if chunk:
+                                buffer += chunk
+                                output = chunk.decode(
+                                    'utf-8', errors='replace')
+                                output_buffer += output
+                                logger.debug(f"PTY output: {output}")
+
+                                # Detect input prompts
+                                if (output.endswith(': ') or output.endswith('? ') or
+                                        'input' in output.lower() or 'enter' in output.lower()):
+                                    waiting_for_input = True
+                                    logger.debug(
+                                        "Detected input prompt in PTY, waiting for input")
+
+                                # Send output through callback
+                                if callback:
+                                    await callback({
+                                        'output': output,
+                                        'waiting_for_input': waiting_for_input,
+                                        'complete': False,
+                                        'exit_code': None,
+                                        'error': None
+                                    })
+                                return True
+                        except OSError as e:
+                            if e.errno != errno.EAGAIN:
+                                logger.error(f"Error reading from PTY: {e}")
+                            return False
+                except Exception as e:
+                    logger.error(f"Exception in read_pty_output: {e}")
+                    return False
+                return False
+
+            # Main execution loop
+            while process.returncode is None:
+                # Read any available output
+                has_output = await read_pty_output()
+
+                # Handle waiting for input
+                if waiting_for_input:
+                    logger.debug("PTY waiting for input...")
+                    try:
+                        user_input = await asyncio.wait_for(input_queue.get(), timeout=timeout)
+                        logger.debug(f"Received user input: {user_input}")
+
+                        # Write the input to the PTY
+                        os.write(master, f"{user_input}\n".encode())
+
+                        # Output the input as if it was echoed (since PTY echo is off)
+                        if callback:
+                            await callback({
+                                'output': f"{user_input}\n",
+                                'waiting_for_input': False,
+                                'complete': False,
+                                'exit_code': None,
+                                'error': None
+                            })
+
+                        waiting_for_input = False
+                    except asyncio.TimeoutError:
+                        logger.warning("Input timeout exceeded")
+                        process.kill()
+                        if callback:
+                            await callback({
+                                'output': '\nInput timeout exceeded',
+                                'complete': True,
+                                'exit_code': 1,
+                                'error': 'Timeout waiting for input'
+                            })
+                        return {
+                            'exit_code': 1,
+                            'output': output_buffer + '\nInput timeout exceeded',
+                            'error': 'Timeout waiting for input'
+                        }
+
+                # Small delay to prevent CPU hogging
+                await asyncio.sleep(0.05)
+
+                # Check if process has finished
+                try:
+                    exit_code = process.returncode
+                    if exit_code is not None:
+                        break
+
+                    # Small timeout for process.wait()
+                    await asyncio.wait_for(process.wait(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    # Process still running, continue loop
+                    pass
+
+            # Process has finished, read any remaining output
+            while await read_pty_output():
+                pass
+
+            # Send completion notification
+            if callback:
+                await callback({
+                    'output': '',
+                    'waiting_for_input': False,
+                    'complete': True,
+                    'exit_code': process.returncode,
+                    'error': None if process.returncode == 0 else f"Process exited with code {process.returncode}"
+                })
+
+            return {
+                'exit_code': process.returncode,
+                'output': output_buffer,
+                'error': None if process.returncode == 0 else f"Process exited with code {process.returncode}"
+            }
+
+        except Exception as e:
+            logger.exception(f"Exception in execute_code_with_pty: {e}")
+            if callback:
+                await callback({
+                    'output': '',
+                    'complete': True,
+                    'exit_code': 1,
+                    'error': str(e)
+                })
+            return {
+                'exit_code': 1,
+                'output': '',
+                'error': str(e)
+            }
+        finally:
+            # Clean up resources
+            try:
+                os.close(master)
+            except:
+                pass
+
+            try:
+                if process and process.returncode is None:
+                    process.kill()
+            except:
+                pass
 
 
 # Create a singleton instance
