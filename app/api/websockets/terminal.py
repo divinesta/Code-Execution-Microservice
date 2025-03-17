@@ -70,16 +70,27 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                             'complete': chunk_data.get('complete', False),
                                             'waiting_for_input': chunk_data.get('waiting_for_input', False)
                                         })
+                        # Check if code likely requires input
+                        language = execution_service.active_sessions[session_id]['language']
+                        has_input = execution_service._has_input_requirements(code, language)
 
-
-                        # Execute with streaming
-                        await execution_service.execute_code_with_streaming(
-                            session_id,
-                            code,
-                            input_data,
-                            timeout,
-                            callback=stream_callback
-                        )
+                        # Use PTY execution for Python code that requires input
+                        if language == 'python' and has_input:
+                            await execution_service.execute_code_with_pty(
+                                session_id,
+                                code,
+                                timeout,
+                                callback=stream_callback
+                            )
+                        else:
+                            # Use regular streaming execution
+                            await execution_service.execute_code_with_streaming(
+                                session_id,
+                                code,
+                                input_data,
+                                timeout,
+                                callback=stream_callback
+                            )
 
                     except Exception as e:
                         logger.error(f"Error executing code: {str(e)}")
