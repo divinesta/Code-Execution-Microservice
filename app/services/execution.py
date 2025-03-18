@@ -550,9 +550,14 @@ class CodeExecutionService:
                 if waiting_for_input:
                     logger.debug("PTY waiting for input...")
                     try:
-                        # Use a longer timeout for input polling
-                        user_input = await asyncio.wait_for(input_queue.get(), timeout=30)
-                        logger.debug(f"Received user input: {user_input}")
+                        # Check if there's input already in the queue before waiting
+                        if not input_queue.empty():
+                            user_input = input_queue.get_nowait()
+                            logger.debug(f"Retrieved waiting input: {user_input}")
+                        else:
+                            # Use a short timeout that will let us continue polling
+                            user_input = await asyncio.wait_for(input_queue.get(), timeout=0.5)
+                            logger.debug(f"Received user input: {user_input}")
 
                         # Add a newline to the input and encode properly
                         input_with_newline = f"{user_input}\n".encode('utf-8')
@@ -562,7 +567,7 @@ class CodeExecutionService:
                         os.write(master, input_with_newline)
 
                         # Add a small delay to let the process process the input
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.2)
 
                         # Output the input as if it was echoed (since PTY echo is off)
                         if callback:
@@ -575,21 +580,18 @@ class CodeExecutionService:
                             })
 
                         waiting_for_input = False
+
+                        # Read any immediate output after input
+                        await read_pty_output()
+
                     except asyncio.TimeoutError:
-                        logger.warning("Input timeout exceeded")
-                        process.kill()
-                        if callback:
-                            await callback({
-                                'output': '\nInput timeout exceeded',
-                                'complete': True,
-                                'exit_code': 1,
-                                'error': 'Timeout waiting for input'
-                            })
-                        return {
-                            'exit_code': 1,
-                            'output': output_buffer + '\nInput timeout exceeded',
-                            'error': 'Timeout waiting for input'
-                        }
+                        # Just continue the loop - don't time out the whole process
+                        # This allows us to keep checking both for output and for input
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error processing input: {str(e)}")
+                        # Continue the loop even if there's an error processing input
+                        continue
 
                 # Small delay to prevent CPU hogging
                 await asyncio.sleep(0.05)
