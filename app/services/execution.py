@@ -553,24 +553,24 @@ class CodeExecutionService:
                         output = chunk.decode('utf-8', errors='replace')
                         output_buffer += output
                         logger.debug(f"PTY output: {output.strip()}")
-
-                        # Check if code might be waiting for input
-                        if self._has_input_requirements(code, language):
+                        # Determine if the code is prompting for input
+                        waiting = self._has_input_requirements(code, language)
+                        if waiting and not waiting_for_input:
                             waiting_for_input = True
-                            # Send input request to the callback
                         if callback:
                             await callback({
                                 'output': output,
-                                'waiting_for_input': waiting_for_input,
+                                'waiting_for_input': waiting,
                                 'complete': False,
                                 'exit_code': None,
                                 'error': None
                             })
-                        return True
+                        return True, waiting
+                return False, False
             except OSError as e:
                 if e.errno != errno.EAGAIN:
                     logger.error(f"Error reading PTY output: {e}")
-            return False
+                return False, False
 
         # Main loop to read output and handle input
         try:
@@ -602,7 +602,7 @@ class CodeExecutionService:
                     pass
 
             while True:
-                has_output, _= await read_output()
+                has_output, _ = await read_output()
                 if not has_output:
                     break
                 await asyncio.sleep(0.05)
@@ -647,7 +647,6 @@ class CodeExecutionService:
                     process.kill()
             except:
                 pass
-
 
 
 # Create a singleton instance
