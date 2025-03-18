@@ -171,7 +171,7 @@ class CodeExecutionService:
 
             # Prepare the command based on language
             if language == 'python':
-                cmd = f"python {code_path}"
+                cmd = f"python /code/{code_filename}"
 
             elif language == 'cpp':
                 compile_cmd = f"g++ /code/{code_filename} -o /code/a.out"
