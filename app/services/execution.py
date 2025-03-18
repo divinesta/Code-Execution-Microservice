@@ -492,10 +492,25 @@ class CodeExecutionService:
         fl = fcntl.fcntl(master, fcntl.F_GETFL)
         fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
+        # Determine the python executable
+        python_executable = shutil.which("python3") or shutil.which("python")
+        if not python_executable:
+            error_msg = "Python executable not found in PATH"
+            logger.error(error_msg)
+            if callback:
+                await callback({
+                    'output': '',
+                    'complete': True,
+                    'exit_code': 1,
+                    'error': error_msg
+                })
+            return {'exit_code': 1, 'output': '', 'error': error_msg}
+
         # Start the process in the PTY
         try:
             process = await asyncio.create_subprocess_exec(
-                *cmd,
+                python_executable,
+                code_path,
                 stdin=slave,
                 stdout=slave,
                 stderr=slave,
