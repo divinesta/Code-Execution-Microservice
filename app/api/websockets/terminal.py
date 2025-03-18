@@ -80,7 +80,7 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                         has_input = execution_service._has_input_requirements(code, language)
 
                         # Choose execution method based on input requirements
-                        if language == 'python' and has_input:
+                        if has_input:
                             # Use PTY for interactive Python programs
                             await execution_service.execute_code_with_pty(
                                 session_id,
@@ -139,12 +139,12 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                             'status': 'success'
                         })
                     elif session_id in execution_service.active_sessions:
-                        # For process-based execution
-                        if 'input_queue' not in execution_service.active_sessions[session_id]:
-                            execution_service.active_sessions[session_id]['input_queue'] = asyncio.Queue(
-                            )
+                        # For Docker container execution
+                        container_info = execution_service.active_sessions[session_id]
+                        if 'input_queue' not in container_info:
+                            container_info['input_queue'] = asyncio.Queue()
 
-                        await execution_service.active_sessions[session_id]['input_queue'].put(input_response)
+                        await container_info['input_queue'].put(input_response)
                         await websocket.send_json({
                             'type': 'terminal.input_processed',
                             'status': 'success'

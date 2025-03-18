@@ -574,43 +574,38 @@ class CodeExecutionService:
 
         # Main loop to read output and handle input
         try:
+            waiting_for_input = False
             while process.returncode is None:
-                await read_output()
+                has_output, is_waiting = await read_output()
+
+                if is_waiting:
+                    waiting_for_input = True
 
                 # Handle user input if program is waiting for it
-                if waiting_for_input:
-                    logger.debug(f"Waiting for input from user...")
+                if waiting_for_input and not input_queue.empty():
                     user_input = await input_queue.get()
                     logger.debug(f"Received input: {user_input}")
 
                     # Send input to the PTY
                     os.write(master, f"{user_input}\n".encode('utf-8'))
-
+                    waiting_for_input = False
                     await asyncio.sleep(0.2)
 
-                    if callback:
-                        await callback({
-                            'output': f"{user_input}\n",
-                            'waiting_for_input': False,
-                            'complete': False,
-                            'exit_code': None,
-                            'error': None
-                        })
+                await asyncio.sleep(0.05)
 
-                    waiting_for_input = False
-
-            # Give time for final output to be processed
-            await asyncio.sleep(0.05)
-            await asyncio.sleep(0.05)
-            if process.returncode is not None:
+                # Check if the process is still running
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=0.05)
+                    proc_status = await asyncio.wait_for(asyncio.shield(process.wait()), timeout=0.01)
+                    if proc_status is not None:
+                        break
                 except asyncio.TimeoutError:
                     pass
 
-            # Read any remaining output
-            while await read_output():
-                pass
+            while True:
+                has_output, _= await read_output()
+                if not has_output:
+                    break
+                await asyncio.sleep(0.05)
 
             # Send completion notification
             if callback:
