@@ -71,8 +71,14 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                             'waiting_for_input': chunk_data.get('waiting_for_input', False)
                                         })
                         # Check if code likely requires input
-                        language = execution_service.active_sessions[session_id]['language']
-                        has_input = execution_service._has_input_requirements(code, language)
+                        if session_id in execution_service.active_sessions:
+                            language = execution_service.active_sessions[session_id]['language']
+                        elif session_id in execution_service.active_containers:
+                            language = execution_service.active_containers[session_id]['language']
+                        else:
+                            raise ValueError(f"Session {session_id} not found")
+                        has_input = execution_service._has_input_requirements(
+                            code, language)
 
                         # Use PTY execution for Python code that requires input
                         if language == 'python' and has_input:
