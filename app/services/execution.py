@@ -534,10 +534,20 @@ class CodeExecutionService:
                 if waiting_for_input:
                     logger.debug("PTY waiting for input...")
                     try:
-                        # Use a short timeout for input polling instead of the full execution timeout.
-                        user_input = await asyncio.wait_for(input_queue.get(), timeout=1)
+                        # Use a longer timeout for input polling
+                        user_input = await asyncio.wait_for(input_queue.get(), timeout=30)
                         logger.debug(f"Received user input: {user_input}")
-                        os.write(master, f"{user_input}\n".encode())
+
+                        # Add a newline to the input and encode properly
+                        input_with_newline = f"{user_input}\n".encode('utf-8')
+                        logger.debug(f"Writing to PTY: {input_with_newline}")
+
+                        # Write the input to the PTY
+                        os.write(master, input_with_newline)
+
+                        # Add a small delay to let the process process the input
+                        await asyncio.sleep(0.1)
+
                         if callback:
                             await callback({
                                 'output': f"{user_input}\n",
@@ -548,7 +558,7 @@ class CodeExecutionService:
                             })
                         waiting_for_input = False
                     except asyncio.TimeoutError:
-                        # No input received in this short interval; continue waiting.
+                        # No input received in this polling interval; continue waiting.
                         pass
 
                 await asyncio.sleep(0.05)
