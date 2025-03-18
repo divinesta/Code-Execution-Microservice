@@ -11,6 +11,7 @@ import fcntl
 import select
 import signal
 import termios
+import sys
 import errno
 
 from app.core.config import settings
@@ -385,7 +386,8 @@ class CodeExecutionService:
 
             # Prepare the command based on language
             if language == 'python':
-                cmd = f"python -u {code_path}"  # Using full path
+                # cmd = f"python -u {code_path}"  # Using full path
+                cmd = ["python", "-u", code_path]
                 logger.debug(f"Python command: {cmd}")
             elif language == 'cpp':
                 compile_cmd = ["g++", code_path, "-o", f"{code_dir}/a.out"]
@@ -759,27 +761,48 @@ class CodeExecutionService:
             logger.error(f"Session {session_id} not found")
             raise ValueError(f"Session {session_id} not found")
 
-        # Get session info
-        if session_id in self.active_sessions:
-            session_info = self.active_sessions[session_id]
-            language = session_info['language']
-            workspace_path = session_info['workspace_path']
+        # Use Docker container: if not, we return an error since streaming mode supports only Docker-based execution
+        if session_id in self.active_containers:
+            container_info = self.active_containers[session_id]
+            language = container_info['language']
+            container = container_info['container']
+            logger.debug(
+                f"Using Docker container for session {session_id}, language: {language}")
         else:
-            logger.error(f"Session {session_id} not found in active sessions")
+            logger.error(
+                f"Session {session_id} should be in Docker containers but wasn't found.")
             return {
                 'exit_code': 1,
                 'output': "",
-                'error': f"Session {session_id} not found in active sessions"
+                'error': f"Session {session_id} not found in Docker containers for streaming execution."
             }
 
-        # Create code file
-        file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
-        code_path = f"{workspace_path}/code.{file_ext}"
+        # Create (or reuse) the code file for this session
+        if 'code_path' not in container_info:
+            file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
+            code_filename = f"code_main.{file_ext}"
+            code_dir = "./workspace"
+            os.makedirs(code_dir, exist_ok=True)
+            code_path = os.path.join(code_dir, code_filename)
+            container_info['code_path'] = code_path
+            logger.debug(f"Creating new code file: {code_path}")
+        else:
+            code_path = container_info['code_path']
+            code_dir = os.path.dirname(code_path)
+            code_filename = os.path.basename(code_path)
+            logger.debug(f"Using existing code file: {code_path}")
 
-        with open(code_path, "w") as f:
-            f.write(code)
-
-        logger.debug(f"Successfully wrote code to file: {code_path}")
+        try:
+            with open(code_path, "w") as f:
+                f.write(code)
+            logger.debug(f"Successfully wrote code to file: {code_path}")
+        except Exception as e:
+            logger.error(f"Error writing code to file: {e}")
+            return {
+                'exit_code': 1,
+                'output': "",
+                'error': f"Error writing code file: {str(e)}"
+            }
 
         # Prepare command based on language
         if language == 'python':
@@ -811,9 +834,9 @@ class CodeExecutionService:
         waiting_for_input = False
 
         # Set up input queue if needed
-        if 'input_queue' not in session_info:
-            session_info['input_queue'] = asyncio.Queue()
-        input_queue = session_info['input_queue']
+        if 'input_queue' not in container_info:
+            container_info['input_queue'] = asyncio.Queue()
+        input_queue = container_info['input_queue']
 
         # Start the process
         try:
