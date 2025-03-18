@@ -39,6 +39,7 @@ class CodeExecutionService:
 
     async def create_session(self, language):
         """Create a new code execution session with interactive terminal"""
+        # Generate unique session ID
         session_id = str(uuid.uuid4())
 
         if self.use_docker:
@@ -50,17 +51,19 @@ class CodeExecutionService:
 
     async def _create_docker_session(self, session_id, language):
         """Create a Docker-based execution session"""
+        # Validate language support
         if language not in settings.LANGUAGE_IMAGES:
             raise ValueError(f"Unsupported language: {language}")
 
         image_name = settings.LANGUAGE_IMAGES[language]
 
-        # The container will see the same directory at:
+        # Define container workspace path
         code_file_path = '/root/Code-Execution-Microservice/workspace'
 
         logger.info(f"Container workspace path: {code_file_path}")
 
         try:
+            # Launch container with security constraints
             container = self.client.containers.run(
                 image=image_name,
                 detach=True,
@@ -127,18 +130,21 @@ class CodeExecutionService:
     async def execute_code(self, session_id, code, input_data=None, timeout=None):
         """Execute code in an existing session"""
         logger.debug("Entering execute_code (non-streaming)")
+        # Set default timeout if not provided
         if timeout is None:
             timeout = settings.MAX_EXECUTION_TIME
 
+        # Validate session exists
         if session_id not in self.active_containers and session_id not in self.active_sessions:
             raise ValueError(f"Session {session_id} not found")
 
+        # Handle Docker-based execution
         if self.use_docker and session_id in self.active_containers:
             container_info = self.active_containers[session_id]
             language = container_info['language']
             container = container_info['container']
 
-            # Create (or reuse) the code file for this session
+            # Create or reuse code file for this session
             if 'code_path' not in container_info:
                 file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
                 code_filename = f"code_{uuid.uuid4().hex}.{file_ext}"
@@ -153,6 +159,7 @@ class CodeExecutionService:
                 code_filename = os.path.basename(code_path)
                 logger.debug(f"Using existing code file: {code_path}")
 
+            # Write code to file
             try:
                 with open(code_path, "w") as f:
                     f.write(code)
@@ -169,7 +176,7 @@ class CodeExecutionService:
                 logger.error(f"Code file not created at: {code_path}")
                 raise RuntimeError("Failed to create code file")
 
-            # Prepare the command based on language
+            # Prepare language-specific execution command
             if language == 'python':
                 cmd = f"python /code/{code_filename}"
 
@@ -211,6 +218,7 @@ class CodeExecutionService:
 
     def _has_input_requirements(self, code, language):
         """Check if code likely requires user input based on language"""
+        # Language-specific input detection patterns
         if language == 'python':
             has_input = "input(" in code
             logger.info(f"Python code input requirements check: {has_input}")
@@ -233,11 +241,13 @@ class CodeExecutionService:
     async def execute_code_with_streaming(self, session_id, code, input_data=None, timeout=None, callback=None):
         logger.debug("Entering execute_code_with_streaming")
 
+        # Set default timeout if not provided
         if timeout is None:
             timeout = settings.MAX_EXECUTION_TIME
 
         logger.debug(f"Session ID: {session_id}, Timeout: {timeout}")
 
+        # Validate session exists
         if session_id not in self.active_containers and session_id not in self.active_sessions:
             logger.error(f"Session {session_id} not found")
             raise ValueError(f"Session {session_id} not found")
@@ -247,6 +257,7 @@ class CodeExecutionService:
         # For now, just execute and send the complete result through callback
         result = await self.execute_code(session_id, code, input_data, timeout)
 
+        # Send results via callback if provided
         if callback:
             await callback({
                 'output': result['output'],
@@ -259,8 +270,8 @@ class CodeExecutionService:
 
     async def terminate_session(self, session_id):
         """Terminate an execution session and clean up resources"""
+        # Handle Docker-based session termination
         if session_id in self.active_containers:
-            # Docker-based session
             try:
                 container_info = self.active_containers[session_id]
                 container = container_info['container']
@@ -283,8 +294,8 @@ class CodeExecutionService:
                 logger.error(
                     f"Error terminating Docker session {session_id}: {e}")
                 return False
+        # Handle process-based session termination
         elif session_id in self.active_sessions:
-            # Process-based session
             try:
                 # Clean up workspace
                 workspace_path = self.active_sessions[session_id]['workspace_path']
@@ -306,6 +317,7 @@ class CodeExecutionService:
 
     async def _handle_interactive_input(self, session_id, fifo_path, container_info, callback):
         """Handle interactive input via named pipe to container"""
+        # Initialize input queue if not exists
         if 'input_queue' not in container_info:
             container_info['input_queue'] = asyncio.Queue()
 
@@ -402,9 +414,11 @@ class CodeExecutionService:
         """Execute code in a pseudo-terminal for proper input handling"""
         logger.debug("Entering execute_code_with_pty")
 
+        # Set default timeout if not provided
         if timeout is None:
             timeout = settings.MAX_EXECUTION_TIME
 
+        # Validate session exists
         if session_id not in self.active_containers and session_id not in self.active_sessions:
             logger.error(f"Session {session_id} not found")
             raise ValueError(f"Session {session_id} not found")
@@ -425,7 +439,7 @@ class CodeExecutionService:
                 'error': f"Session {session_id} not found in Docker containers for streaming execution."
             }
 
-        # Create (or reuse) the code file for this session
+        # Create or reuse code file for this session
         if 'code_path' not in container_info:
             file_ext = settings.FILE_EXTENSIONS.get(language, 'txt')
             code_filename = f"code_main.{file_ext}"
@@ -440,6 +454,7 @@ class CodeExecutionService:
             code_filename = os.path.basename(code_path)
             logger.debug(f"Using existing code file: {code_path}")
 
+        # Write code to file
         try:
             with open(code_path, "w") as f:
                 f.write(code)
@@ -452,11 +467,11 @@ class CodeExecutionService:
                 'error': f"Error writing code file: {str(e)}"
             }
 
-        # Prepare command based on language
+        # Prepare language-specific command
         if language == 'python':
-            cmd = ["python", code_path]
+            cmd = f"python {code_path}"
         elif language == 'javascript':
-            cmd = ["node", code_path]
+            cmd = f"node {code_path}"
         else:
             return {
                 'exit_code': 1,
@@ -464,10 +479,10 @@ class CodeExecutionService:
                 'error': f"Language {language} not supported in PTY mode"
             }
 
-        # Create PTY
+        # Create pseudo-terminal
         master, slave = pty.openpty()
 
-        # Set terminal to raw mode
+        # Set terminal to raw mode (no echo, no line buffering)
         old_attr = termios.tcgetattr(slave)
         new_attr = termios.tcgetattr(slave)
         new_attr[3] = new_attr[3] & ~termios.ECHO & ~termios.ICANON
@@ -477,16 +492,7 @@ class CodeExecutionService:
         fl = fcntl.fcntl(master, fcntl.F_GETFL)
         fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
-        # Set up variables
-        output_buffer = ""
-        waiting_for_input = False
-
-        # Set up input queue if needed
-        if 'input_queue' not in container_info:
-            container_info['input_queue'] = asyncio.Queue()
-        input_queue = container_info['input_queue']
-
-        # Start the process
+        # Start the process in the PTY
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -495,121 +501,100 @@ class CodeExecutionService:
                 stderr=slave,
                 start_new_session=True
             )
-
-            # Close the slave end as the child has it
             os.close(slave)
+        except Exception as e:
+            logger.error(f"Error launching subprocess in PTY: {e}")
+            if callback:
+                await callback({
+                    'output': "",
+                    'complete': True,
+                    'exit_code': 1,
+                    'error': f"Error creating PTY: {str(e)}"
+                })
+            return {
+                'exit_code': 1,
+                'output': "",
+                'error': f"Error creating PTY: {str(e)}"
+            }
 
-            # Read output loop
-            async def read_pty_output():
-                nonlocal output_buffer, waiting_for_input
-                buffer = b''
-                try:
-                    r, w, e = select.select([master], [], [], 0.1)
-                    if master in r:
-                        try:
-                            chunk = os.read(master, 1024)
-                            if chunk:
-                                buffer += chunk
-                                output = chunk.decode(
-                                    'utf-8', errors='replace')
-                                output_buffer += output
-                                logger.debug(f"PTY output: {output}")
+        output_buffer = ""
+        waiting_for_input = False
 
-                                # Detect input prompts
-                                if (output.endswith(': ') or output.endswith('? ') or
-                                        'input' in output.lower() or 'enter' in output.lower()):
-                                    waiting_for_input = True
-                                    logger.debug(
-                                        "Detected input prompt in PTY, waiting for input")
+        # Ensure there's an input queue
+        if 'input_queue' not in container_info:
+            container_info['input_queue'] = asyncio.Queue()
 
-                                # Send output through callback
-                                if callback:
-                                    await callback({
-                                        'output': output,
-                                        'waiting_for_input': waiting_for_input,
-                                        'complete': False,
-                                        'exit_code': None,
-                                        'error': None
-                                    })
-                                return True
-                        except OSError as e:
-                            if e.errno != errno.EAGAIN:
-                                logger.error(f"Error reading from PTY: {e}")
-                            return False
-                except Exception as e:
-                    logger.error(f"Exception in read_pty_output: {e}")
-                    return False
-                return False
+        input_queue = container_info['input_queue']
 
-            # Main execution loop
-            while process.returncode is None:
-                # Read any available output
-                has_output = await read_pty_output()
+        async def read_output():
+            """Read output from the PTY and send it to the callback"""
+            nonlocal output_buffer, waiting_for_input
+            try:
+                # Check if there's data to read from the PTY
+                r, w, e = select.select([master], [], [master], 0.1)
+                if master in r:
+                    chunk = os.read(master, 1024)
+                    if chunk:
+                        output = chunk.decode('utf-8', errors='replace')
+                        output_buffer += output
+                        logger.debug(f"PTY output: {output.strip()}")
 
-                # Handle waiting for input
-                if waiting_for_input:
-                    logger.debug("PTY waiting for input...")
-                    try:
-                        # Check if there's input already in the queue before waiting
-                        if not input_queue.empty():
-                            user_input = input_queue.get_nowait()
-                            logger.debug(f"Retrieved waiting input: {user_input}")
-                        else:
-                            # Use a short timeout that will let us continue polling
-                            user_input = await asyncio.wait_for(input_queue.get(), timeout=0.5)
-                            logger.debug(f"Received user input: {user_input}")
-
-                        # Add a newline to the input and encode properly
-                        input_with_newline = f"{user_input}\n".encode('utf-8')
-                        logger.debug(f"Writing to PTY: {input_with_newline}")
-
-                        # Write the input to the PTY
-                        os.write(master, input_with_newline)
-
-                        # Add a small delay to let the process process the input
-                        await asyncio.sleep(0.2)
-
-                        # Output the input as if it was echoed (since PTY echo is off)
+                        # Check if code might be waiting for input
+                        if self._has_input_requirements(code, language):
+                            waiting_for_input = True
+                            # Send input request to the callback
                         if callback:
                             await callback({
-                                'output': f"{user_input}\n",
-                                'waiting_for_input': False,
+                                'output': output,
+                                'waiting_for_input': waiting_for_input,
                                 'complete': False,
                                 'exit_code': None,
                                 'error': None
                             })
+                        return True
+            except OSError as e:
+                if e.errno != errno.EAGAIN:
+                    logger.error(f"Error reading PTY output: {e}")
+            return False
 
-                        waiting_for_input = False
+        # Main loop to read output and handle input
+        try:
+            while process.returncode is None:
+                await read_output()
 
-                        # Read any immediate output after input
-                        await read_pty_output()
+                # Handle user input if program is waiting for it
+                if waiting_for_input:
+                    logger.debug(f"Waiting for input from user...")
+                    user_input = await input_queue.get()
+                    logger.debug(f"Received input: {user_input}")
 
-                    except asyncio.TimeoutError:
-                        # Just continue the loop - don't time out the whole process
-                        # This allows us to keep checking both for output and for input
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error processing input: {str(e)}")
-                        # Continue the loop even if there's an error processing input
-                        continue
+                    # Send input to the PTY
+                    os.write(master, f"{user_input}\n".encode('utf-8'))
 
-                # Small delay to prevent CPU hogging
-                await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.2)
 
-                # Check if process has finished
+                    if callback:
+                        await callback({
+                            'output': f"{user_input}\n",
+                            'waiting_for_input': False,
+                            'complete': False,
+                            'exit_code': None,
+                            'error': None
+                        })
+
+                    waiting_for_input = False
+
+            # Give time for final output to be processed
+            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.05)
+            if process.returncode is not None:
                 try:
-                    exit_code = process.returncode
-                    if exit_code is not None:
-                        break
-
-                    # Small timeout for process.wait()
-                    await asyncio.wait_for(process.wait(), timeout=0.1)
+                    await asyncio.wait_for(process.wait(), timeout=0.05)
                 except asyncio.TimeoutError:
-                    # Process still running, continue loop
                     pass
 
-            # Process has finished, read any remaining output
-            while await read_pty_output():
+            # Read any remaining output
+            while await read_output():
                 pass
 
             # Send completion notification
@@ -618,29 +603,28 @@ class CodeExecutionService:
                     'output': '',
                     'waiting_for_input': False,
                     'complete': True,
-                    'exit_code': process.returncode,
-                    'error': None if process.returncode == 0 else f"Process exited with code {process.returncode}"
+                    'exit_code': process.returncode or 0,
+                    'error': None if process.returncode == 0 else f"Process returned with exit code {process.returncode}"
                 })
 
             return {
-                'exit_code': process.returncode,
+                'exit_code': process.returncode or 0,
                 'output': output_buffer,
-                'error': None if process.returncode == 0 else f"Process exited with code {process.returncode}"
+                'error': None if process.returncode == 0 else f"Process returned with exit code {process.returncode}"
             }
-
         except Exception as e:
-            logger.exception(f"Exception in execute_code_with_pty: {e}")
+            logger.error(f"Error in PTY execution: {e}")
             if callback:
                 await callback({
                     'output': '',
                     'complete': True,
                     'exit_code': 1,
-                    'error': str(e)
+                    'error': f"Error in PTY execution: {str(e)}"
                 })
             return {
                 'exit_code': 1,
                 'output': '',
-                'error': str(e)
+                'error': f"Error in PTY execution: {str(e)}"
             }
         finally:
             # Clean up resources
@@ -648,12 +632,12 @@ class CodeExecutionService:
                 os.close(master)
             except:
                 pass
-
             try:
                 if process and process.returncode is None:
                     process.kill()
             except:
                 pass
+
 
 
 # Create a singleton instance

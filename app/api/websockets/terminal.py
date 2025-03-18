@@ -22,33 +22,33 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
 
     # Check if the session exists
     try:
-        # Add connection to active connections for this session
+        # Track this connection in our active connections dictionary
         if session_id not in active_connections:
             active_connections[session_id] = []
         active_connections[session_id].append(websocket)
 
-        # Send connection confirmation
+        # Send connection confirmation to client
         await websocket.send_json({
             'type': 'connection.established',
             'session_id': session_id
         })
 
-        # Handle WebSocket communication
+        # Main WebSocket communication loop
         try:
             while True:
-                # Receive message from WebSocket
+                # Receive and parse message from client
                 data = await websocket.receive_text()
                 data = json.loads(data)
 
                 # Handle different message types
                 if 'code' in data:
-                    # Execute submitted code
+                    # Code execution request handling
                     code = data['code']
                     input_data = data.get('input_data')
                     timeout = data.get('timeout', settings.MAX_EXECUTION_TIME)
 
                     try:
-                        # Define callback for streaming output
+                        # Define callback for streaming output back to client
                         async def stream_callback(chunk_data):
                             await websocket.send_json({
                                 'type': 'terminal.code_chunk',
@@ -59,8 +59,7 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                 'waiting_for_input': chunk_data.get('waiting_for_input', False)
                             })
 
-                            # If there are multiple connections for this session,
-                            # broadcast to others
+                            # Broadcast to other connections for this session if any
                             if len(active_connections[session_id]) > 1:
                                 for conn in active_connections[session_id]:
                                     if conn != websocket:
@@ -70,18 +69,19 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                             'complete': chunk_data.get('complete', False),
                                             'waiting_for_input': chunk_data.get('waiting_for_input', False)
                                         })
-                        # Check if code likely requires input
+
+                        # Determine if code needs interactive input handling
                         if session_id in execution_service.active_sessions:
                             language = execution_service.active_sessions[session_id]['language']
                         elif session_id in execution_service.active_containers:
                             language = execution_service.active_containers[session_id]['language']
                         else:
                             raise ValueError(f"Session {session_id} not found")
-                        has_input = execution_service._has_input_requirements(
-                            code, language)
+                        has_input = execution_service._has_input_requirements(code, language)
 
-                        # Use PTY execution for Python code that requires input
+                        # Choose execution method based on input requirements
                         if language == 'python' and has_input:
+                            # Use PTY for interactive Python programs
                             await execution_service.execute_code_with_pty(
                                 session_id,
                                 code,
@@ -89,7 +89,7 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                                 callback=stream_callback
                             )
                         else:
-                            # Use regular streaming execution
+                            # Use standard streaming for non-interactive code
                             await execution_service.execute_code_with_streaming(
                                 session_id,
                                 code,
@@ -99,6 +99,7 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                             )
 
                     except Exception as e:
+                        # Handle execution errors
                         logger.error(f"Error executing code: {str(e)}")
                         await websocket.send_json({
                             'type': 'terminal.error',
@@ -106,10 +107,8 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                         })
 
                 elif 'command' in data:
-                    # Execute shell command (limited functionality)
-                    # This would need additional security measures in production
+                    # Shell command execution (currently disabled)
                     command = data['command']
-                    # Implementation would depend on your security requirements
                     await websocket.send_json({
                         'type': 'terminal.command_response',
                         'output': f"Command execution not implemented: {command}",
@@ -117,18 +116,19 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                     })
 
                 elif 'ping' in data:
-                    # Simple ping/pong to keep connection alive
+                    # Heartbeat mechanism to keep connection alive
                     await websocket.send_json({
                         'type': 'pong',
                         'timestamp': data.get('timestamp')
                     })
 
                 elif 'input_response' in data:
-                    # Process user's input response to a previous prompt
+                    # Handle user input for interactive programs
                     input_response = data['input_response']
 
-                    # Store this in the active session or container
+                    # Route input to the appropriate execution context
                     if session_id in execution_service.active_containers:
+                        # For Docker container execution
                         container_info = execution_service.active_containers[session_id]
                         if 'input_queue' not in container_info:
                             container_info['input_queue'] = asyncio.Queue()
@@ -139,6 +139,7 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                             'status': 'success'
                         })
                     elif session_id in execution_service.active_sessions:
+                        # For process-based execution
                         if 'input_queue' not in execution_service.active_sessions[session_id]:
                             execution_service.active_sessions[session_id]['input_queue'] = asyncio.Queue(
                             )
@@ -149,22 +150,25 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
                             'status': 'success'
                         })
                     else:
+                        # No active execution waiting for input
                         await websocket.send_json({
                             'type': 'terminal.error',
                             'error': 'No active execution waiting for input'
                         })
 
                 else:
-                    # Unknown message type
+                    # Handle unknown message types
                     await websocket.send_json({
                         'type': 'terminal.error',
                         'error': 'Unknown message type'
                     })
 
         except WebSocketDisconnect:
+            # Client disconnected normally
             logger.info(f"WebSocket disconnected for session {session_id}")
 
         except Exception as e:
+            # Handle unexpected errors
             logger.error(f"WebSocket error: {str(e)}")
             await websocket.send_json({
                 'type': 'terminal.error',
@@ -172,12 +176,12 @@ async def terminal_websocket(websocket: WebSocket, session_id: str):
             })
 
     finally:
-        # Clean up when disconnected
+        # Cleanup resources when connection ends
         if session_id in active_connections:
             if websocket in active_connections[session_id]:
                 active_connections[session_id].remove(websocket)
 
-            # If this was the last connection, terminate the session
+            # Terminate session if no more connections
             if len(active_connections[session_id]) == 0:
                 await execution_service.terminate_session(session_id)
                 del active_connections[session_id]
